@@ -70,48 +70,52 @@ func ReviewCommand() *cli.Command {
 			},
 		},
 		Action: func(c *cli.Context) error {
-			llms, err := parseLLMList(c.String("llm"))
-			if err != nil {
-				return err
-			}
-
-			prRef, ok := git.ParsePullRequestRef(c.String("pr"))
-			if !ok {
-				return fmt.Errorf("--pr must be a GitHub PR number or PR URL")
-			}
-
-			ui.Step("Reviewing pull request %s", ui.Emphasize(prRef))
-
-			ui.Step("Fetching PR metadata")
-			pr, err := git.GetPullRequest(prRef)
-			if err != nil {
-				return err
-			}
-
-			ui.Step("Creating temporary worktree from PR head branch %s", ui.Emphasize(pr.HeadRefName))
-			tempDir, fetchedRef, err := addWorktreeFromPullRequestHead(pr)
-			if err != nil {
-				return err
-			}
-			ui.Note("Worktree: %s", tempDir)
-			defer cleanupWorktree(tempDir, fetchedRef)
-
-			diff, err := git.DiffAgainstBase(tempDir, pr.BaseRefName)
-			if err != nil {
-				return err
-			}
-
-			contextPath, err := writePullRequestContextFile(tempDir, pr, diff)
-			if err != nil {
-				return err
-			}
-
-			if len(llms) == 1 {
-				return runSingleReview(llms[0], tempDir, pr, contextPath)
-			}
-			return runPairedReview(llms, tempDir, pr, contextPath)
+			return runReview(c.String("pr"), c.String("llm"))
 		},
 	}
+}
+
+func runReview(prValue string, llmValue string) error {
+	llms, err := parseLLMList(llmValue)
+	if err != nil {
+		return err
+	}
+
+	prRef, ok := git.ParsePullRequestRef(prValue)
+	if !ok {
+		return fmt.Errorf("--pr must be a GitHub PR number or PR URL")
+	}
+
+	ui.Step("Reviewing pull request %s", ui.Emphasize(prRef))
+
+	ui.Step("Fetching PR metadata")
+	pr, err := git.GetPullRequest(prRef)
+	if err != nil {
+		return err
+	}
+
+	ui.Step("Creating temporary worktree from PR head branch %s", ui.Emphasize(pr.HeadRefName))
+	tempDir, fetchedRef, err := addWorktreeFromPullRequestHead(pr)
+	if err != nil {
+		return err
+	}
+	ui.Note("Worktree: %s", tempDir)
+	defer cleanupWorktree(tempDir, fetchedRef)
+
+	diff, err := git.DiffAgainstBase(tempDir, pr.BaseRefName)
+	if err != nil {
+		return err
+	}
+
+	contextPath, err := writePullRequestContextFile(tempDir, pr, diff)
+	if err != nil {
+		return err
+	}
+
+	if len(llms) == 1 {
+		return runSingleReview(llms[0], tempDir, pr, contextPath)
+	}
+	return runPairedReview(llms, tempDir, pr, contextPath)
 }
 
 func extractJSON(input string) string {

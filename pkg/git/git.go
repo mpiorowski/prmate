@@ -22,6 +22,8 @@ type PullRequest struct {
 	Closed      bool   `json:"closed"`
 }
 
+const pullRequestJSONFields = "number,title,body,state,url,baseRefName,headRefName,mergedAt,closed"
+
 func pullRequestHeadRef(number int) string {
 	return fmt.Sprintf("refs/pr-tool/pr/%d", number)
 }
@@ -278,7 +280,7 @@ func GetPullRequest(ref string) (PullRequest, error) {
 
 	cmd := exec.Command(
 		"gh", "pr", "view", prRef,
-		"--json", "number,title,body,state,url,baseRefName,headRefName,mergedAt,closed",
+		"--json", pullRequestJSONFields,
 	)
 	out, err := runQuiet(cmd)
 	if err != nil {
@@ -294,6 +296,92 @@ func GetPullRequest(ref string) (PullRequest, error) {
 	}
 
 	return pr, nil
+}
+
+func GetCurrentBranchPullRequest() (PullRequest, bool, error) {
+	branch, err := CurrentBranch()
+	if err != nil {
+		return PullRequest{}, false, err
+	}
+	if branch == "" {
+		return PullRequest{}, false, fmt.Errorf("not currently on any branch")
+	}
+
+	cmd := exec.Command("gh", "pr", "view", "--json", pullRequestJSONFields)
+	out, err := runQuiet(cmd)
+	if err != nil {
+		if isNoPullRequestForCurrentBranchError(err) {
+			return PullRequest{}, false, nil
+		}
+		return PullRequest{}, false, fmt.Errorf("gh pr view failed: %w", err)
+	}
+
+	pr, found, err := parsePullRequest(out)
+	if err != nil || !found {
+		return pr, found, err
+	}
+	if !isOpenPullRequest(pr) {
+		return PullRequest{}, false, nil
+	}
+
+	return pr, true, nil
+}
+
+func isOpenPullRequest(pr PullRequest) bool {
+	return !pr.Closed && strings.EqualFold(pr.State, "OPEN")
+}
+
+func GetPullRequestForBranch(branch string) (PullRequest, bool, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return PullRequest{}, false, fmt.Errorf("branch is required")
+	}
+
+	cmd := exec.Command(
+		"gh", "pr", "list",
+		"--head", branch,
+		"--state", "open",
+		"--limit", "1",
+		"--json", pullRequestJSONFields,
+	)
+	out, err := runQuiet(cmd)
+	if err != nil {
+		return PullRequest{}, false, fmt.Errorf("gh pr list failed: %w", err)
+	}
+
+	return parsePullRequestList(out)
+}
+
+func parsePullRequestList(out string) (PullRequest, bool, error) {
+	var prs []PullRequest
+	if err := json.Unmarshal([]byte(out), &prs); err != nil {
+		return PullRequest{}, false, fmt.Errorf("decode gh pr list output: %w", err)
+	}
+	if len(prs) == 0 {
+		return PullRequest{}, false, nil
+	}
+	if prs[0].Number == 0 {
+		return PullRequest{}, false, fmt.Errorf("gh pr list returned empty pull request")
+	}
+
+	return prs[0], true, nil
+}
+
+func parsePullRequest(out string) (PullRequest, bool, error) {
+	var pr PullRequest
+	if err := json.Unmarshal([]byte(out), &pr); err != nil {
+		return PullRequest{}, false, fmt.Errorf("decode gh pr view output: %w", err)
+	}
+	if pr.Number == 0 {
+		return PullRequest{}, false, fmt.Errorf("gh pr view returned empty pull request")
+	}
+
+	return pr, true, nil
+}
+
+func isNoPullRequestForCurrentBranchError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no pull requests found")
 }
 
 func GetPullRequestDiff(ref string) (string, error) {

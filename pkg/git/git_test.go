@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,90 @@ func TestParsePullRequestRef(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestParsePullRequestList(t *testing.T) {
+	t.Parallel()
+
+	pr, found, err := parsePullRequestList(`[{"number":123,"title":"Test PR","state":"OPEN","url":"https://github.com/example/repo/pull/123","baseRefName":"main","headRefName":"feature/test"}]`)
+	if err != nil {
+		t.Fatalf("parsePullRequestList returned error: %v", err)
+	}
+	if !found {
+		t.Fatal("expected PR to be found")
+	}
+	if pr.Number != 123 || pr.Title != "Test PR" || pr.HeadRefName != "feature/test" {
+		t.Fatalf("unexpected PR: %#v", pr)
+	}
+}
+
+func TestParsePullRequest(t *testing.T) {
+	t.Parallel()
+
+	pr, found, err := parsePullRequest(`{"number":123,"title":"Test PR","state":"OPEN","url":"https://github.com/example/repo/pull/123","baseRefName":"main","headRefName":"feat/online-since-sidebar"}`)
+	if err != nil {
+		t.Fatalf("parsePullRequest returned error: %v", err)
+	}
+	if !found {
+		t.Fatal("expected PR to be found")
+	}
+	if pr.Number != 123 || pr.Title != "Test PR" || pr.HeadRefName != "feat/online-since-sidebar" {
+		t.Fatalf("unexpected PR: %#v", pr)
+	}
+}
+
+func TestParsePullRequestRejectsEmptyPullRequest(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := parsePullRequest(`{}`); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestIsOpenPullRequest(t *testing.T) {
+	t.Parallel()
+
+	if !isOpenPullRequest(PullRequest{State: "OPEN"}) {
+		t.Fatal("expected open PR to match")
+	}
+	if isOpenPullRequest(PullRequest{State: "CLOSED", Closed: true}) {
+		t.Fatal("did not expect closed PR to match")
+	}
+	if isOpenPullRequest(PullRequest{State: "MERGED", Closed: true}) {
+		t.Fatal("did not expect merged PR to match")
+	}
+}
+
+func TestParsePullRequestListReturnsNotFoundForEmptyList(t *testing.T) {
+	t.Parallel()
+
+	pr, found, err := parsePullRequestList(`[]`)
+	if err != nil {
+		t.Fatalf("parsePullRequestList returned error: %v", err)
+	}
+	if found {
+		t.Fatalf("expected no PR, got %#v", pr)
+	}
+}
+
+func TestParsePullRequestListRejectsEmptyPullRequest(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := parsePullRequestList(`[{}]`); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestIsNoPullRequestForCurrentBranchError(t *testing.T) {
+	t.Parallel()
+
+	if !isNoPullRequestForCurrentBranchError(errors.New("exit status 1\nno pull requests found for branch \"main\"")) {
+		t.Fatal("expected gh no-PR message to match")
+	}
+
+	if isNoPullRequestForCurrentBranchError(errors.New("error connecting to api.github.com")) {
+		t.Fatal("did not expect unrelated gh error to match")
 	}
 }
 

@@ -2,8 +2,9 @@
 
 prmate is a small personal CLI for drafting pull request descriptions and running AI-assisted pull request reviews.
 
-It installs a short `pr` command with two workflows:
+It installs a short `pr` command with a smart default plus two explicit workflows:
 
+- `pr` inspects the current branch. If it has no open GitHub PR, it runs `pr describe` with `codex`; if it already has an open PR, it runs `pr review` with `codex,claude`.
 - `pr describe` drafts a PR title/body from a branch diff, then creates or updates a GitHub PR.
 - `pr review` reviews an existing GitHub PR. By default it runs two LLM reviewers, has them cross-check each other, and merges the validated findings into one final review.
 
@@ -37,6 +38,14 @@ gh auth login
 ```
 
 ## Usage
+
+Let `pr` pick the workflow for the current branch:
+
+```sh
+pr
+```
+
+This also works after checking out a contributor PR with `gh pr checkout <number>`; the CLI asks GitHub CLI for the PR associated with the checked-out branch.
 
 Draft a PR description for the current branch:
 

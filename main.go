@@ -23,6 +23,9 @@ func main() {
 	app := &cli.App{
 		Name:  "pr",
 		Usage: "Personal pull request helper",
+		Action: func(c *cli.Context) error {
+			return cmd.RunSmart()
+		},
 		Commands: []*cli.Command{
 			cmd.DescribeCommand(),
 			cmd.ReviewCommand(),
