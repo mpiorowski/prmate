@@ -81,9 +81,11 @@ type commandArtifacts struct {
 }
 
 type RunOptions struct {
-	Timeout      time.Duration
-	ShowProgress bool
-	Verbose      bool
+	Timeout          time.Duration
+	ShowProgress     bool
+	Verbose          bool
+	Thinking         string
+	ThinkingExplicit bool
 }
 
 // Run runs the AI agent in the specific worktree directory and returns its normalized response.
@@ -177,6 +179,11 @@ func RunWithOptions(dir string, prompt string, llm string, mode Mode, opts RunOp
 }
 
 func buildCommand(ctx context.Context, prompt string, llm string, mode Mode, opts RunOptions) (*exec.Cmd, commandArtifacts, func(), error) {
+	thinking := normalizeThinking(opts.Thinking)
+	if err := ValidateThinking(llm, thinking, opts.ThinkingExplicit); err != nil {
+		return nil, commandArtifacts{}, nil, err
+	}
+
 	switch llm {
 	case "gemini":
 		format := "json"
@@ -199,6 +206,9 @@ func buildCommand(ctx context.Context, prompt string, llm string, mode Mode, opt
 		}
 
 		args := []string{"exec", "--color", "never", "--output-last-message", outputFile}
+		if thinking != "" {
+			args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", thinking))
+		}
 		if opts.Verbose {
 			args = append(args, "--json")
 		}
@@ -210,6 +220,9 @@ func buildCommand(ctx context.Context, prompt string, llm string, mode Mode, opt
 		}, cleanup, nil
 	case "opencode":
 		args := []string{"run", "--format", "json"}
+		if thinking != "" {
+			args = append(args, "--variant", thinking)
+		}
 		args = append(args, prompt)
 		return exec.CommandContext(ctx, "opencode", args...), commandArtifacts{provider: "opencode", mode: mode}, func() {}, nil
 	case "claude":
@@ -220,6 +233,9 @@ func buildCommand(ctx context.Context, prompt string, llm string, mode Mode, opt
 			format = "stream-json"
 		}
 		args := []string{"-p", "--output-format", format}
+		if thinking != "" {
+			args = append(args, "--effort", thinking)
+		}
 		if opts.Verbose {
 			args = append(args, "--verbose", "--include-partial-messages")
 		}
@@ -229,6 +245,54 @@ func buildCommand(ctx context.Context, prompt string, llm string, mode Mode, opt
 		args = append(args, prompt)
 		return exec.CommandContext(ctx, "claude", args...), commandArtifacts{provider: "claude", mode: mode}, func() {}, nil
 	}
+}
+
+func normalizeThinking(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func ValidateThinking(provider string, value string, explicit bool) error {
+	value = normalizeThinking(value)
+	if value == "" {
+		return nil
+	}
+
+	switch provider {
+	case "claude", "codex", "gemini", "opencode":
+	default:
+		provider = "claude"
+	}
+
+	switch provider {
+	case "codex":
+		if hasString([]string{"none", "minimal", "low", "medium", "high", "xhigh"}, value) {
+			return nil
+		}
+		return fmt.Errorf("unsupported thinking level %q for codex; use one of: none, minimal, low, medium, high, xhigh", value)
+	case "claude":
+		if hasString([]string{"low", "medium", "high", "xhigh", "max"}, value) {
+			return nil
+		}
+		return fmt.Errorf("unsupported thinking level %q for claude; use one of: low, medium, high, xhigh, max", value)
+	case "gemini":
+		if !explicit {
+			return nil
+		}
+		return fmt.Errorf("thinking level is not supported for gemini")
+	case "opencode":
+		return nil
+	default:
+		return nil
+	}
+}
+
+func hasString(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 func createTempOutputFile() (string, error) {

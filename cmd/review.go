@@ -68,16 +68,25 @@ func ReviewCommand() *cli.Command {
 				Value:   "claude,codex",
 				Aliases: []string{"l"},
 			},
+			ThinkingFlag(),
 		},
 		Action: func(c *cli.Context) error {
-			return runReview(c.String("pr"), c.String("llm"))
+			thinking, thinkingExplicit := ThinkingFromContext(c)
+			return runReviewWithThinking(c.String("pr"), c.String("llm"), thinking, thinkingExplicit)
 		},
 	}
 }
 
 func runReview(prValue string, llmValue string) error {
+	return runReviewWithThinking(prValue, llmValue, defaultThinkingLevel, false)
+}
+
+func runReviewWithThinking(prValue string, llmValue string, thinking string, thinkingExplicit bool) error {
 	llms, err := parseLLMList(llmValue)
 	if err != nil {
+		return err
+	}
+	if err := validateThinkingForLLMs(llms, thinking, thinkingExplicit); err != nil {
 		return err
 	}
 
@@ -113,9 +122,9 @@ func runReview(prValue string, llmValue string) error {
 	}
 
 	if len(llms) == 1 {
-		return runSingleReview(llms[0], tempDir, pr, contextPath)
+		return runSingleReview(llms[0], tempDir, pr, contextPath, thinking, thinkingExplicit)
 	}
-	return runPairedReview(llms, tempDir, pr, contextPath)
+	return runPairedReview(llms, tempDir, pr, contextPath, thinking, thinkingExplicit)
 }
 
 func extractJSON(input string) string {
@@ -293,6 +302,15 @@ func parseLLMList(value string) ([]string, error) {
 	return llms, nil
 }
 
+func validateThinkingForLLMs(llms []string, thinking string, thinkingExplicit bool) error {
+	for _, llm := range llms {
+		if err := ai.ValidateThinking(llm, thinking, thinkingExplicit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func parseReviewReport(response ai.Response) (*ReviewReport, error) {
 	jsonStr := extractJSON(response.FinalMessage)
 	var report ReviewReport
@@ -302,7 +320,7 @@ func parseReviewReport(response ai.Response) (*ReviewReport, error) {
 	return &report, nil
 }
 
-func runSingleReview(llm string, tempDir string, pr git.PullRequest, contextPath string) error {
+func runSingleReview(llm string, tempDir string, pr git.PullRequest, contextPath string, thinking string, thinkingExplicit bool) error {
 	guidelines, err := prompts.Load("review")
 	if err != nil {
 		return fmt.Errorf("failed to load review guidelines: %w", err)
@@ -311,7 +329,7 @@ func runSingleReview(llm string, tempDir string, pr git.PullRequest, contextPath
 	prompt := buildReviewPrompt(pr, contextPath, guidelines)
 	ui.Step("Running review with %s", ui.Emphasize(llm))
 
-	results := runReviews([]string{llm}, tempDir, prompt, true)
+	results := runReviews([]string{llm}, tempDir, prompt, true, thinking, thinkingExplicit)
 	result := results[0]
 	if result.err != nil {
 		return reportReviewFailure(result)
@@ -322,7 +340,7 @@ func runSingleReview(llm string, tempDir string, pr git.PullRequest, contextPath
 	return nil
 }
 
-func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextPath string) error {
+func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextPath string, thinking string, thinkingExplicit bool) error {
 	reviewGuidelines, err := prompts.Load("review")
 	if err != nil {
 		return fmt.Errorf("failed to load review guidelines: %w", err)
@@ -338,7 +356,7 @@ func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextP
 
 	ui.Step("Round 1/3: running independent reviews with %s and %s", ui.Emphasize(llms[0]), ui.Emphasize(llms[1]))
 	initialPrompt := buildReviewPrompt(pr, contextPath, reviewGuidelines)
-	initialReviews := runReviews(llms, tempDir, initialPrompt, false)
+	initialReviews := runReviews(llms, tempDir, initialPrompt, false, thinking, thinkingExplicit)
 	for _, result := range initialReviews {
 		if result.err != nil {
 			return reportReviewFailure(result)
@@ -372,7 +390,7 @@ func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextP
 			),
 		},
 	}
-	crossChecks := runTextPrompts(tempDir, "cross-check", crossCheckPrompts, false)
+	crossChecks := runTextPrompts(tempDir, "cross-check", crossCheckPrompts, false, thinking, thinkingExplicit)
 	for _, result := range crossChecks {
 		if result.err != nil {
 			return reportTextFailure("cross-check", result)
@@ -381,7 +399,7 @@ func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextP
 
 	ui.Step("Round 3/3: merging validated findings with %s", ui.Emphasize(llms[0]))
 	synthesisPrompt := buildSynthesisPrompt(pr, contextPath, initialReviews, crossChecks, synthesisGuidelines)
-	response, err := ai.RunWithOptions(tempDir, synthesisPrompt, llms[0], ai.ReadOnly, ai.RunOptions{ShowProgress: true, Verbose: false})
+	response, err := ai.RunWithOptions(tempDir, synthesisPrompt, llms[0], ai.ReadOnly, ai.RunOptions{ShowProgress: true, Verbose: false, Thinking: thinking, ThinkingExplicit: thinkingExplicit})
 	if err != nil {
 		return fmt.Errorf("synthesis failed: %w", err)
 	}
@@ -399,14 +417,14 @@ func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextP
 	return nil
 }
 
-func runReviews(llms []string, tempDir string, prompt string, verbose bool) []reviewRunResult {
+func runReviews(llms []string, tempDir string, prompt string, verbose bool, thinking string, thinkingExplicit bool) []reviewRunResult {
 	results := make([]reviewRunResult, len(llms))
 	prompts := make([]promptRun, len(llms))
 	for i, llm := range llms {
 		prompts[i] = promptRun{llm: llm, prompt: prompt}
 	}
 
-	textResults := runTextPrompts(tempDir, "review", prompts, verbose)
+	textResults := runTextPrompts(tempDir, "review", prompts, verbose, thinking, thinkingExplicit)
 	for i, textResult := range textResults {
 		result := reviewRunResult{llm: textResult.llm, err: textResult.err, response: textResult.response}
 		if result.err == nil {
@@ -423,7 +441,7 @@ func runReviews(llms []string, tempDir string, prompt string, verbose bool) []re
 	return results
 }
 
-func runTextPrompts(tempDir string, label string, prompts []promptRun, verbose bool) []textRunResult {
+func runTextPrompts(tempDir string, label string, prompts []promptRun, verbose bool, thinking string, thinkingExplicit bool) []textRunResult {
 	results := make([]textRunResult, len(prompts))
 	statuses := make([]string, len(prompts))
 	for i := range statuses {
@@ -469,7 +487,7 @@ func runTextPrompts(tempDir string, label string, prompts []promptRun, verbose b
 			statuses[idx] = "running"
 			mu.Unlock()
 
-			response, err := ai.RunWithOptions(tempDir, run.prompt, run.llm, ai.ReadOnly, ai.RunOptions{ShowProgress: false, Verbose: verbose})
+			response, err := ai.RunWithOptions(tempDir, run.prompt, run.llm, ai.ReadOnly, ai.RunOptions{ShowProgress: false, Verbose: verbose, Thinking: thinking, ThinkingExplicit: thinkingExplicit})
 			result := textRunResult{llm: run.llm, response: response, err: err}
 			if err == nil {
 				result.output = response.FinalMessage

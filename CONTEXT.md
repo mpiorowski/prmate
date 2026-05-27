@@ -38,9 +38,9 @@ This file is the primary working context for the prmate project.
 - Go module: `pr`
 - Go version: `1.25.4`
 - Main commands:
-  - `pr`: smart default. Inspects the current branch; if no open GitHub PR exists, runs describe with `codex`; if an open PR exists, runs review with `codex,claude`.
-  - `pr describe`: generate a PR title/body from a branch diff, then create or update a GitHub PR after user confirmation.
-  - `pr review`: review an existing GitHub PR, with either one reviewer or a default two-reviewer cross-check and synthesis flow.
+  - `pr`: smart default. Inspects the current branch; if no open GitHub PR exists, runs describe with `codex`; if an open PR exists, runs review with `codex,claude`. Accepts `--think`.
+  - `pr describe`: generate a PR title/body from a branch diff, then create or update a GitHub PR after user confirmation. Accepts `--think`.
+  - `pr review`: review an existing GitHub PR, with either one reviewer or a default two-reviewer cross-check and synthesis flow. Accepts `--think`.
 - Supported LLM CLI providers: `claude`, `codex`, `gemini`, `opencode`
 - External runtime tools: `git`, `gh`, and at least one supported LLM CLI on `PATH`
 
@@ -68,6 +68,7 @@ Highest-risk areas:
 |-- cmd/
 |   |-- describe.go
 |   |-- describe_test.go
+|   |-- flags.go
 |   |-- pr_context.go
 |   |-- review.go
 |   |-- review_test.go
@@ -262,6 +263,13 @@ Provider command expectations:
 - Codex: `codex exec --color never --output-last-message <tempfile> <prompt>`, with `--json` in verbose mode.
 - OpenCode: `opencode run --format json <prompt>`.
 
+Thinking/reasoning effort mapping:
+- User-facing flag: `--think <level>` (alias `--thinking`) on root `pr`, `pr describe`, and `pr review`. Default is `high`.
+- Codex: passed as `-c model_reasoning_effort="<level>"`; accepted levels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
+- Claude: passed as `--effort <level>`; accepted levels are `low`, `medium`, `high`, `xhigh`, `max`.
+- OpenCode: passed through as `--variant <level>` because OpenCode variants are provider/model-specific and may be custom.
+- Gemini: unsupported by current Gemini CLI adapter. The implicit default is ignored for Gemini, but explicitly setting `--think` with Gemini returns a clear error.
+
 Modes:
 - `ReadOnly` is labeled `READ` and is used by current `describe` and `review` flows.
 - `Write` exists for provider permission flags, but current command workflows do not use it.
@@ -323,6 +331,7 @@ This tool passes PR title, PR body, local diff content, and selected worktree fi
 - `ReviewReport` JSON shape is a public internal contract between prompts and parser. Update prompt guidelines, parser, tests, and Markdown rendering together.
 - Keep prompt guidelines embedded through `pkg/prompts`; do not replace them with runtime file reads unless install and packaging behavior are redesigned.
 - Do not broaden LLM provider names in command parsing without adding provider adapter behavior and tests.
+- Do not add new thinking levels for Codex or Claude without checking provider docs/help and updating validation tests.
 - Avoid broad repository exploration in review prompts. The current review guidelines intentionally constrain agents to changed files and directly referenced code.
 
 ---
@@ -339,6 +348,7 @@ Current package coverage:
 - `cmd`: prompt construction, LLM list parsing, JSON extraction, and invalid PR validation.
 - `cmd` smart default: no-open-PR vs open-PR dispatch behavior through injected operations.
 - `pkg/ai`: provider command construction, response parsing, mode labels, and output normalization.
+- `pkg/ai` thinking controls: provider-specific command arguments and unsupported-provider validation.
 - `pkg/git`: PR reference parsing/list parsing, git diff helpers, branch/change detection, push behavior, PR ref fetch/delete helpers.
 - `pkg/prompts`: embedded guideline loading.
 - `pkg/ui`: color/no-color formatting.
@@ -415,6 +425,7 @@ Setup behavior:
 ## 8. Known Caveats [VOLATILE]
 
 - Provider CLIs are external and their JSON/JSONL output formats may change. `pkg/ai` is the compatibility boundary.
+- Provider thinking flags are not uniform: Codex uses config override, Claude uses effort, OpenCode uses variants, and Gemini currently has no supported mapping. The CLI defaults to `high` for supported providers and ignores that implicit default for Gemini.
 - `pr describe` currently diffs against `origin/main` only. If repositories use another default base branch, behavior may need to be generalized.
 - `git.FetchOrigin` calls are best effort in some worktree creation paths. This is intentional for local-only branches, but it means stale remotes can affect generated diffs.
 - `BranchExists` runs git in the current process directory rather than accepting an explicit repo path.

@@ -70,17 +70,26 @@ func DescribeCommand() *cli.Command {
 				Value:   "claude",
 				Aliases: []string{"l"},
 			},
+			ThinkingFlag(),
 		},
 		Action: func(c *cli.Context) error {
-			return runDescribe(c.String("br"), c.String("pr"), c.String("llm"))
+			thinking, thinkingExplicit := ThinkingFromContext(c)
+			return runDescribeWithThinking(c.String("br"), c.String("pr"), c.String("llm"), thinking, thinkingExplicit)
 		},
 	}
 }
 
 func runDescribe(branch string, prRef string, llm string) error {
+	return runDescribeWithThinking(branch, prRef, llm, defaultThinkingLevel, false)
+}
+
+func runDescribeWithThinking(branch string, prRef string, llm string, thinking string, thinkingExplicit bool) error {
 	guidelines, err := prompts.Load("describe")
 	if err != nil {
 		return fmt.Errorf("failed to load describe guidelines: %w", err)
+	}
+	if err := ai.ValidateThinking(llm, thinking, thinkingExplicit); err != nil {
+		return err
 	}
 
 	if prRef != "" {
@@ -153,7 +162,7 @@ Follow these PR description guidelines:
 
 	ui.Step("Running %s in read-only mode", ui.Emphasize(llm))
 
-	response, err := ai.RunWithOptions(worktreeDir, prompt, llm, ai.ReadOnly, ai.RunOptions{ShowProgress: true, Verbose: true})
+	response, err := ai.RunWithOptions(worktreeDir, prompt, llm, ai.ReadOnly, ai.RunOptions{ShowProgress: true, Verbose: true, Thinking: thinking, ThinkingExplicit: thinkingExplicit})
 	if err != nil {
 		return err
 	}

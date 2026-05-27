@@ -89,6 +89,21 @@ Use a different pair:
 pr review --pr 123 --llm gemini,codex
 ```
 
+Thinking/reasoning effort defaults to `high` where the selected provider supports it:
+
+```sh
+pr --think high
+pr describe --think high
+pr review --pr 123 --think xhigh
+```
+
+Provider mapping:
+
+- `codex`: passes `model_reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`).
+- `claude`: passes `--effort` (`low`, `medium`, `high`, `xhigh`, `max`).
+- `opencode`: passes `--variant` with the provided value.
+- `gemini`: the implicit `high` default is ignored; explicitly using `--think` with Gemini returns an error.
+
 ## Review Flow
 
 With two LLMs, `pr review` runs three rounds:

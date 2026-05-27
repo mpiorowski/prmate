@@ -14,21 +14,21 @@ func TestRunSmartDescribesWhenNoOpenPRExists(t *testing.T) {
 	var describeCalled bool
 	var reviewCalled bool
 
-	err := runSmartWithOps(smartOps{
+	err := runSmartWithOps("high", false, smartOps{
 		currentBranch: func() (string, error) {
 			return "feature/test", nil
 		},
 		currentPullRequest: func() (git.PullRequest, bool, error) {
 			return git.PullRequest{}, false, nil
 		},
-		describe: func(branch string, prRef string, llm string) error {
+		describe: func(branch string, prRef string, llm string, thinking string, thinkingExplicit bool) error {
 			describeCalled = true
-			if branch != "" || prRef != "" || llm != smartDescribeLLM {
-				t.Fatalf("describe args = (%q, %q, %q)", branch, prRef, llm)
+			if branch != "" || prRef != "" || llm != smartDescribeLLM || thinking != "high" || thinkingExplicit {
+				t.Fatalf("describe args = (%q, %q, %q, %q, %v)", branch, prRef, llm, thinking, thinkingExplicit)
 			}
 			return nil
 		},
-		review: func(prRef string, llms string) error {
+		review: func(prRef string, llms string, thinking string, thinkingExplicit bool) error {
 			reviewCalled = true
 			return nil
 		},
@@ -50,21 +50,21 @@ func TestRunSmartReviewsWhenOpenPRExists(t *testing.T) {
 	var describeCalled bool
 	var reviewCalled bool
 
-	err := runSmartWithOps(smartOps{
+	err := runSmartWithOps("xhigh", true, smartOps{
 		currentBranch: func() (string, error) {
 			return "feature/test", nil
 		},
 		currentPullRequest: func() (git.PullRequest, bool, error) {
 			return git.PullRequest{Number: 123}, true, nil
 		},
-		describe: func(branch string, prRef string, llm string) error {
+		describe: func(branch string, prRef string, llm string, thinking string, thinkingExplicit bool) error {
 			describeCalled = true
 			return nil
 		},
-		review: func(prRef string, llms string) error {
+		review: func(prRef string, llms string, thinking string, thinkingExplicit bool) error {
 			reviewCalled = true
-			if prRef != "123" || llms != smartReviewLLMs {
-				t.Fatalf("review args = (%q, %q)", prRef, llms)
+			if prRef != "123" || llms != smartReviewLLMs || thinking != "xhigh" || !thinkingExplicit {
+				t.Fatalf("review args = (%q, %q, %q, %v)", prRef, llms, thinking, thinkingExplicit)
 			}
 			return nil
 		},
@@ -83,7 +83,7 @@ func TestRunSmartReviewsWhenOpenPRExists(t *testing.T) {
 func TestRunSmartRejectsDetachedHead(t *testing.T) {
 	t.Parallel()
 
-	err := runSmartWithOps(smartOps{
+	err := runSmartWithOps("", false, smartOps{
 		currentBranch: func() (string, error) {
 			return "", nil
 		},
@@ -103,7 +103,7 @@ func TestRunSmartRejectsDetachedHead(t *testing.T) {
 func TestRunSmartWrapsPullRequestInspectionError(t *testing.T) {
 	t.Parallel()
 
-	err := runSmartWithOps(smartOps{
+	err := runSmartWithOps("", false, smartOps{
 		currentBranch: func() (string, error) {
 			return "feature/test", nil
 		},

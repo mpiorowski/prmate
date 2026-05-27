@@ -15,6 +15,7 @@ func TestBuildCommand(t *testing.T) {
 		name    string
 		llm     string
 		mode    Mode
+		opts    RunOptions
 		want    []string
 		cleanup bool
 	}{
@@ -37,11 +38,39 @@ func TestBuildCommand(t *testing.T) {
 			want: []string{"gemini", "-p", "prompt", "--output-format", "json"},
 		},
 		{
+			name: "gemini ignores implicit default thinking",
+			llm:  "gemini",
+			mode: ReadOnly,
+			opts: RunOptions{Thinking: "high"},
+			want: []string{"gemini", "-p", "prompt", "--output-format", "json"},
+		},
+		{
 			name:    "codex writes last message to a temp file",
 			llm:     "codex",
 			mode:    Write,
 			want:    []string{"codex", "exec", "--color", "never", "--output-last-message"},
 			cleanup: true,
+		},
+		{
+			name: "codex sets reasoning effort through config override",
+			llm:  "codex",
+			mode: ReadOnly,
+			opts: RunOptions{Thinking: "HIGH"},
+			want: []string{"codex", "exec", "--color", "never", "--output-last-message"},
+		},
+		{
+			name: "claude sets effort",
+			llm:  "claude",
+			mode: ReadOnly,
+			opts: RunOptions{Thinking: "xhigh"},
+			want: []string{"claude", "-p", "--output-format", "json", "--effort", "xhigh", "prompt"},
+		},
+		{
+			name: "opencode sets variant",
+			llm:  "opencode",
+			mode: ReadOnly,
+			opts: RunOptions{Thinking: "max"},
+			want: []string{"opencode", "run", "--format", "json", "--variant", "max", "prompt"},
 		},
 		{
 			name: "unknown llm falls back to claude",
@@ -56,7 +85,7 @@ func TestBuildCommand(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd, artifacts, cleanup, err := buildCommand(context.Background(), "prompt", tt.llm, tt.mode, RunOptions{})
+			cmd, artifacts, cleanup, err := buildCommand(context.Background(), "prompt", tt.llm, tt.mode, tt.opts)
 			if err != nil {
 				t.Fatalf("buildCommand returned error: %v", err)
 			}
@@ -80,8 +109,54 @@ func TestBuildCommand(t *testing.T) {
 					t.Fatalf("unexpected codex output file: %s", artifacts.outputFile)
 				}
 			}
+			if tt.name == "codex sets reasoning effort through config override" {
+				if !containsAdjacentArgs(got, "-c", "model_reasoning_effort=\"high\"") {
+					t.Fatalf("codex args missing thinking config override: %#v", got)
+				}
+			}
 		})
 	}
+}
+
+func TestBuildCommandRejectsUnsupportedThinking(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		llm  string
+		want string
+	}{
+		{name: "gemini unsupported", llm: "gemini", want: "not supported"},
+		{name: "codex invalid", llm: "codex", want: "unsupported thinking level"},
+		{name: "claude invalid", llm: "claude", want: "unsupported thinking level"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, cleanup, err := buildCommand(context.Background(), "prompt", tt.llm, ReadOnly, RunOptions{Thinking: "turbo", ThinkingExplicit: true})
+			if cleanup != nil {
+				cleanup()
+			}
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
+func containsAdjacentArgs(args []string, first string, second string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == first && args[i+1] == second {
+			return true
+		}
+	}
+	return false
 }
 
 func TestModeLabel(t *testing.T) {

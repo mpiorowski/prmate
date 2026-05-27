@@ -90,6 +90,23 @@ func TestParseLLMListAcceptsTwo(t *testing.T) {
 	}
 }
 
+func TestValidateThinkingForLLMs(t *testing.T) {
+	t.Parallel()
+
+	if err := validateThinkingForLLMs([]string{"codex", "claude"}, "xhigh", true); err != nil {
+		t.Fatalf("validateThinkingForLLMs returned error: %v", err)
+	}
+	if err := validateThinkingForLLMs([]string{"gemini"}, "high", false); err != nil {
+		t.Fatalf("implicit gemini default should be ignored, got: %v", err)
+	}
+	if err := validateThinkingForLLMs([]string{"gemini"}, "high", true); err == nil {
+		t.Fatal("expected gemini thinking error")
+	}
+	if err := validateThinkingForLLMs([]string{"codex"}, "max", true); err == nil {
+		t.Fatal("expected codex max thinking error")
+	}
+}
+
 func TestExtractJSONFromFencedBlockWithNestedCodeFenceText(t *testing.T) {
 	t.Parallel()
 
