@@ -18,7 +18,7 @@ func TestBuildReviewPrompt(t *testing.T) {
 		"pull request #123",
 		"source of truth",
 		".pr-context.md",
-		"PR title, PR description, and the local diff",
+		"project context, the PR title, PR description, and the local diff",
 		"Return JSON only.",
 	} {
 		if !strings.Contains(got, want) {

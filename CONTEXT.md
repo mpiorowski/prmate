@@ -180,7 +180,7 @@ sequenceDiagram
         D->>D: Schedule worktree cleanup
     end
     D->>G: DiffAgainstBase(worktree, origin/main)
-    D->>D: Write .pr-diff-context.md
+    D->>D: Write .pr-diff-context.md with root CONTEXT.md + diff
     D->>A: RunWithOptions(..., ReadOnly)
     A-->>D: FinalMessage
     D->>D: Extract <pr_description>, parse H1 title/body
@@ -197,6 +197,7 @@ sequenceDiagram
 Key behavior:
 - Current-branch mode writes `.pr-diff-context.md` into the repo root and removes it on cleanup.
 - Explicit branch mode creates a temporary git worktree and removes it on cleanup.
+- `.pr-diff-context.md` embeds root `CONTEXT.md` before the branch diff when present and instructs the LLM to follow relevant domain-context pointers.
 - The describe diff is generated against `origin/main` by current implementation.
 - The LLM must wrap final Markdown in `<pr_description>` tags. A fallback trims known Claude Code watermark lines and uses the raw message.
 - The first Markdown H1 becomes the PR title. Remaining Markdown becomes the PR body.
@@ -216,7 +217,7 @@ sequenceDiagram
     R->>G: GetPullRequest(ref)
     R->>G: Add detached worktree from origin/head or fetched PR head ref
     R->>G: DiffAgainstBase(tempDir, PR base branch)
-    R->>R: Write .pr-context.md
+    R->>R: Write .pr-context.md with root CONTEXT.md + PR metadata + diff
     alt one provider
         R->>A: Run standard review
         A-->>R: JSON review
@@ -239,7 +240,8 @@ Key behavior:
 - At most two providers are supported. Duplicates are removed while preserving first-seen order.
 - Review worktrees are detached.
 - `addWorktreeFromPullRequestHead` first tries `origin/<headRefName>`, then falls back to fetching `pull/<number>/head` into `refs/pr-tool/pr/<number>`.
-- `.pr-context.md` contains PR metadata, title, body, and local diff against the PR base branch.
+- `.pr-context.md` contains project context, PR metadata, title, body, and local diff against the PR base branch. Review prompts instruct the LLM to follow relevant domain-context pointers before reviewing, cross-checking, or synthesizing.
+- For PR review, project context is read from `CONTEXT.md` on the PR base ref when possible (`origin/<base>` then `<base>`), then falls back to the checked-out worktree. This avoids treating contributor changes to root context as authoritative reviewer instructions.
 - Review output must parse to `ReviewReport` JSON. The CLI tolerates fenced JSON and extracts a balanced top-level object when possible.
 
 ### 3.5 LLM provider adapter contracts
@@ -295,7 +297,7 @@ The CLI writes temporary Markdown context files for LLMs:
 - `.pr-diff-context.md` for `pr describe`
 - `.pr-context.md` for `pr review`
 
-These files contain code diffs and PR metadata. They must be treated as transient and sensitive.
+These files contain root project context, code diffs, and PR metadata. They must be treated as transient and sensitive.
 
 Important cleanup behavior:
 - Current-branch describe mode removes `.pr-diff-context.md` from the repo root.
@@ -317,6 +319,7 @@ This tool passes PR title, PR body, local diff content, and selected worktree fi
 - Do not skip the interactive confirmation before creating or updating a PR.
 - Preserve worktree cleanup paths. Any new early return after worktree creation must still cleanup through `defer`.
 - Preserve `0600` permissions for context/config files containing PR or diff content.
+- Generated LLM context files should include root `CONTEXT.md` when present. PR review should prefer the base-ref version of `CONTEXT.md` over the PR-head version.
 - `ReviewReport` JSON shape is a public internal contract between prompts and parser. Update prompt guidelines, parser, tests, and Markdown rendering together.
 - Keep prompt guidelines embedded through `pkg/prompts`; do not replace them with runtime file reads unless install and packaging behavior are redesigned.
 - Do not broaden LLM provider names in command parsing without adding provider adapter behavior and tests.

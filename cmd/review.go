@@ -206,7 +206,7 @@ func buildReviewPrompt(pr git.PullRequest, contextPath string, guidelines string
 
 Use the checked out PR branch in this worktree as the source of truth for the code under review.
 
-Use %q for additional context. That file contains the PR title, PR description, and the local diff against the PR base branch.
+Use %q for additional context. That file contains project context, the PR title, PR description, and the local diff against the PR base branch. Read the project context and follow relevant domain-context pointers before reviewing.
 
 Treat the PR title and description as intent/context, but prioritize the actual code and tests in the worktree if they conflict.
 
@@ -219,7 +219,7 @@ func buildCrossCheckPrompt(pr git.PullRequest, contextPath string, reviewer stri
 
 Use the checked out PR branch in this worktree as the source of truth for the code under review.
 
-Use %q for additional context. That file contains the PR title, PR description, and the local diff against the PR base branch.
+Use %q for additional context. That file contains project context, the PR title, PR description, and the local diff against the PR base branch. Read the project context and follow relevant domain-context pointers before cross-checking.
 
 You are %s. You already produced this independent review:
 
@@ -243,7 +243,7 @@ func buildSynthesisPrompt(pr git.PullRequest, contextPath string, initialReviews
 
 Use the checked out PR branch in this worktree as the source of truth for the code under review.
 
-Use %q for additional context. That file contains the PR title, PR description, and the local diff against the PR base branch.
+Use %q for additional context. That file contains project context, the PR title, PR description, and the local diff against the PR base branch. Read the project context and follow relevant domain-context pointers before synthesizing.
 
 The reviewers first produced independent reviews, then each reviewer cross-checked the other review.
 

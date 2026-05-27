@@ -119,7 +119,7 @@ Supported config:
 
 ## Privacy
 
-prmate writes PR context files into temporary or current worktrees and passes PR title, description, and diff context to the selected LLM CLI. Do not use it on code you are not allowed to send to those providers.
+prmate writes PR context files into temporary or current worktrees and passes root `CONTEXT.md`, PR title, description, and diff context to the selected LLM CLI. Do not use it on code you are not allowed to send to those providers.
 
 ## Development
 

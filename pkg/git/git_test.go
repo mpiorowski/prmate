@@ -458,3 +458,37 @@ func TestFetchPullRequestHeadAndDeleteRef(t *testing.T) {
 		t.Fatal("expected ref to be deleted")
 	}
 }
+
+func TestReadFileAtRef(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	runGitCommand(t, repo, "init", "-b", "main")
+	runGitCommand(t, repo, "config", "user.email", "test@example.com")
+	runGitCommand(t, repo, "config", "user.name", "Test User")
+
+	if err := os.WriteFile(filepath.Join(repo, "CONTEXT.md"), []byte("# Context\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	runGitCommand(t, repo, "add", ".")
+	runGitCommand(t, repo, "commit", "-m", "context")
+
+	content, ok, err := ReadFileAtRef(repo, "HEAD", "CONTEXT.md")
+	if err != nil {
+		t.Fatalf("ReadFileAtRef returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected file to be found")
+	}
+	if content != "# Context\n" {
+		t.Fatalf("got %q", content)
+	}
+
+	_, ok, err = ReadFileAtRef(repo, "HEAD", "MISSING.md")
+	if err != nil {
+		t.Fatalf("ReadFileAtRef returned error for missing file: %v", err)
+	}
+	if ok {
+		t.Fatal("did not expect missing file to be found")
+	}
+}

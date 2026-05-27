@@ -139,18 +139,17 @@ func runDescribe(branch string, prRef string, llm string) error {
 		return fmt.Errorf("failed to get diff: %w", err)
 	}
 
-	contextFile := filepath.Join(worktreeDir, ".pr-diff-context.md")
-	contextContent := fmt.Sprintf("# Branch Diff (against origin/main)\n\n```diff\n%s\n```\n", diff)
-	if err := os.WriteFile(contextFile, []byte(contextContent), 0o600); err != nil {
+	contextPath, err := writeBranchDiffContextFile(worktreeDir, "origin/main", diff)
+	if err != nil {
 		return fmt.Errorf("failed to write diff context: %w", err)
 	}
 
-	prompt := fmt.Sprintf(`Generate a Pull Request title and description for this branch. The diff against origin/main is in the file .pr-diff-context.md in the current directory. Read that file before writing.
+	prompt := fmt.Sprintf(`Generate a Pull Request title and description for this branch. The project context and diff against origin/main are in the file %s in the current directory. Read that file before writing. If the project context points to domain-specific context files relevant to the diff, read those files too.
 
 You MUST wrap your final output entirely within <pr_description> tags. Inside the tags, format the output as Markdown, with the PR title as an H1 heading (e.g. # My Title), followed by the description body. Do not output JSON.
 
 Follow these PR description guidelines:
-%s`, guidelines)
+%s`, contextPath, guidelines)
 
 	ui.Step("Running %s in read-only mode", ui.Emphasize(llm))
 

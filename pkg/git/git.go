@@ -425,6 +425,25 @@ func GetPRChecks(ref string) (string, error) {
 	return output, nil
 }
 
+func ReadFileAtRef(repoDir string, ref string, path string) (string, bool, error) {
+	ref = strings.TrimSpace(ref)
+	path = strings.TrimSpace(path)
+	if ref == "" {
+		return "", false, fmt.Errorf("ref is required")
+	}
+	if path == "" {
+		return "", false, fmt.Errorf("path is required")
+	}
+
+	cmd := exec.Command("git", "-C", repoDir, "show", fmt.Sprintf("%s:%s", ref, path))
+	out, err := runQuiet(cmd)
+	if err != nil {
+		return "", false, nil
+	}
+
+	return out, true, nil
+}
+
 func FetchPullRequestHead(number int) (string, error) {
 	return fetchPullRequestHead("", number)
 }
