@@ -74,7 +74,7 @@ pr review --pr 123
 The default review uses:
 
 ```sh
---llm claude,codex
+--llm codex,claude
 ```
 
 Use one reviewer for a simpler review:

@@ -3,7 +3,7 @@
 ## Metadata
 - Domain: prmate - personal pull request helper CLI
 - Primary audience: LLM agents working on this codebase, human contributors
-- Last updated: 2026-05-27
+- Last updated: 2026-05-31
 - Status: Active
 - Stability note: Sections marked `[STABLE]` should change rarely. Sections marked `[VOLATILE]` are expected to change often.
 
@@ -237,7 +237,7 @@ sequenceDiagram
 
 Key behavior:
 - `--pr` accepts a number or URL containing `/pull/<number>`.
-- Default providers are `claude,codex`.
+- Default providers are `codex,claude`.
 - At most two providers are supported. Duplicates are removed while preserving first-seen order.
 - Review worktrees are detached.
 - `addWorktreeFromPullRequestHead` first tries `origin/<headRefName>`, then falls back to fetching `pull/<number>/head` into `refs/pr-tool/pr/<number>`.

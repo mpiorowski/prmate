@@ -65,7 +65,7 @@ func ReviewCommand() *cli.Command {
 			&cli.StringFlag{
 				Name:    "llm",
 				Usage:   "LLM(s) to use. One provider runs a standard review; two comma-separated providers cross-check and merge findings. Options: claude, gemini, codex, opencode",
-				Value:   "claude,codex",
+				Value:   "codex,claude",
 				Aliases: []string{"l"},
 			},
 			ThinkingFlag(),
