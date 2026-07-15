@@ -110,8 +110,16 @@ func TestBuildCommand(t *testing.T) {
 				}
 			}
 			if tt.name == "codex sets reasoning effort through config override" {
+				if containsArg(got, "--model") || containsArg(got, "-m") {
+					t.Fatalf("codex args should use the default model, not a model override: %#v", got)
+				}
 				if !containsAdjacentArgs(got, "-c", "model_reasoning_effort=\"high\"") {
 					t.Fatalf("codex args missing thinking config override: %#v", got)
+				}
+			}
+			if tt.name == "claude sets effort" {
+				if containsArg(got, "--model") {
+					t.Fatalf("claude args should use the default model, not a model override: %#v", got)
 				}
 			}
 		})
@@ -148,6 +156,15 @@ func TestBuildCommandRejectsUnsupportedThinking(t *testing.T) {
 			}
 		})
 	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }
 
 func containsAdjacentArgs(args []string, first string, second string) bool {

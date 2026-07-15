@@ -3,7 +3,7 @@
 ## Metadata
 - Domain: prmate - personal pull request helper CLI
 - Primary audience: LLM agents working on this codebase, human contributors
-- Last updated: 2026-05-31
+- Last updated: 2026-07-15
 - Status: Active
 - Stability note: Sections marked `[STABLE]` should change rarely. Sections marked `[VOLATILE]` are expected to change often.
 
@@ -258,15 +258,15 @@ type Response struct {
 ```
 
 Provider command expectations:
-- Claude: `claude -p --output-format json` or `stream-json` in verbose mode.
+- Claude: `claude -p --output-format json` or `stream-json` in verbose mode. It intentionally does not pass `--model`, so Claude Code uses its default model for the run.
 - Gemini: `gemini -p <prompt> --output-format json` or `stream-json` in verbose mode.
-- Codex: `codex exec --color never --output-last-message <tempfile> <prompt>`, with `--json` in verbose mode.
+- Codex: `codex exec --color never --output-last-message <tempfile> <prompt>`, with `--json` in verbose mode. It intentionally does not pass `--model`, so Codex uses its default model for the run.
 - OpenCode: `opencode run --format json <prompt>`.
 
 Thinking/reasoning effort mapping:
 - User-facing flag: `--think <level>` (alias `--thinking`) on root `pr`, `pr describe`, and `pr review`. Default is `high`.
-- Codex: passed as `-c model_reasoning_effort="<level>"`; accepted levels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
-- Claude: passed as `--effort <level>`; accepted levels are `low`, `medium`, `high`, `xhigh`, `max`.
+- Codex: no model override is passed, so Codex uses its default model for the run; reasoning effort is passed as `-c model_reasoning_effort="<level>"`; accepted levels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
+- Claude: no model override is passed, so Claude Code uses its default model for the run; reasoning effort is passed as `--effort <level>`; accepted levels are `low`, `medium`, `high`, `xhigh`, `max`.
 - OpenCode: passed through as `--variant <level>` because OpenCode variants are provider/model-specific and may be custom.
 - Gemini: unsupported by current Gemini CLI adapter. The implicit default is ignored for Gemini, but explicitly setting `--think` with Gemini returns a clear error.
 
@@ -425,7 +425,7 @@ Setup behavior:
 ## 8. Known Caveats [VOLATILE]
 
 - Provider CLIs are external and their JSON/JSONL output formats may change. `pkg/ai` is the compatibility boundary.
-- Provider thinking flags are not uniform: Codex uses config override, Claude uses effort, OpenCode uses variants, and Gemini currently has no supported mapping. The CLI defaults to `high` for supported providers and ignores that implicit default for Gemini.
+- Provider thinking flags are not uniform: Codex and Claude leave model selection to their CLI defaults, Codex uses a config override for effort, Claude uses `--effort`, OpenCode uses variants, and Gemini currently has no supported mapping. The CLI defaults to `high` for supported providers and ignores that implicit default for Gemini.
 - `pr describe` currently diffs against `origin/main` only. If repositories use another default base branch, behavior may need to be generalized.
 - `git.FetchOrigin` calls are best effort in some worktree creation paths. This is intentional for local-only branches, but it means stale remotes can affect generated diffs.
 - `BranchExists` runs git in the current process directory rather than accepting an explicit repo path.

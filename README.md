@@ -99,8 +99,8 @@ pr review --pr 123 --think xhigh
 
 Provider mapping:
 
-- `codex`: passes `model_reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`).
-- `claude`: passes `--effort` (`low`, `medium`, `high`, `xhigh`, `max`).
+- `codex`: does not pass `--model`, so Codex uses its default model; passes `model_reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`).
+- `claude`: does not pass `--model`, so Claude Code uses its default model; passes `--effort` (`low`, `medium`, `high`, `xhigh`, `max`).
 - `opencode`: passes `--variant` with the provided value.
 - `gemini`: the implicit `high` default is ignored; explicitly using `--think` with Gemini returns an error.
 
