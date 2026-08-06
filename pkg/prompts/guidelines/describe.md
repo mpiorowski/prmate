@@ -1,10 +1,18 @@
-# PR description guidelines
+# PR description flow
 
-Write for a reviewer who needs to understand the change quickly and decide whether it is safe to merge.
+Draft the title and description for this branch.
 
-## Output format
+## Read first
 
-The final answer must be Markdown with the PR title as the first H1:
+1. The `<project_guide>` block in the diff context file. It is the standard for
+   what a description says and how it says it. Apply it as written.
+2. The `<project_context>` block in the same file, plus any domain context
+   files it points to that are relevant to the diff.
+3. The branch diff in the same file.
+
+## Required output
+
+Markdown, with the PR title as the first H1:
 
 ```markdown
 # Clear, specific PR title
@@ -16,25 +24,22 @@ The final answer must be Markdown with the PR title as the first H1:
 - Reviewer-facing behavior changes.
 
 ## Behavior notes
-- Important caveats, migrations, rollout details, fallbacks, or edge cases.
+- Caveats, migrations, rollout details, fallbacks, or edge cases. Drop this
+  section when there is nothing material to call out.
 
 ## Feature flags
-- Required flags, configuration, or rollout gates. Use "None" when there are none.
+- Required flags, configuration, or rollout gates. Use "None" when there are
+  none.
 
 ## Screenshots / Video
-- Required for visible UI changes. If assets are not available, say "Not included in this draft; attach before review."
+- Required for visible UI changes. When assets are not available, write "Not
+  included in this draft; attach before review."
 
 ## Testing
 - Automated: tests added or updated, or "Not run" with the reason.
-- Manual: manual verification steps and observed outcomes, or "Not run" with the reason.
+- Manual: verification steps and observed outcomes, or "Not run" with the
+  reason.
 ```
 
-## Writing rules
-
-- Start from user-visible or operational impact, then cover implementation details only when they help review.
-- Keep the title short, concrete, and written in normal words. Do not use branch names, ticket IDs alone, or vague titles.
-- Prefer a short paragraph or a few high-signal bullets over exhaustive change logs.
-- Do not invent screenshots, videos, feature flags, test results, links, metrics, or rollout details.
-- Keep `Behavior notes` only when there is something material to call out.
-- If the diff is small, keep the body small; do not pad it with generic sections beyond the required ones.
-- Regression fixes should explain the broken behavior and mention regression coverage when present.
+Every section above is required except `Behavior notes`. Do not add sections
+beyond these.

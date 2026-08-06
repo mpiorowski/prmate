@@ -66,7 +66,7 @@ func DescribeCommand() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:    "llm",
-				Usage:   "Optional. LLM to use (options: claude, gemini, codex, opencode)",
+				Usage:   "Optional. LLM to use (providers: claude, gemini, codex, opencode). Append :<model> to pick a model, e.g. claude:opus",
 				Value:   "claude",
 				Aliases: []string{"l"},
 			},
@@ -88,7 +88,11 @@ func runDescribeWithThinking(branch string, prRef string, llm string, thinking s
 	if err != nil {
 		return fmt.Errorf("failed to load describe guidelines: %w", err)
 	}
-	if err := ai.ValidateThinking(llm, thinking, thinkingExplicit); err != nil {
+	spec, err := ai.ParseSpec(llm)
+	if err != nil {
+		return err
+	}
+	if err := ai.ValidateThinking(spec.Provider, thinking, thinkingExplicit); err != nil {
 		return err
 	}
 
@@ -96,6 +100,11 @@ func runDescribeWithThinking(branch string, prRef string, llm string, thinking s
 		if _, ok := git.ParsePullRequestRef(prRef); !ok {
 			return fmt.Errorf("--pr must be a valid GitHub PR number or PR URL")
 		}
+	}
+
+	guide, err := requireProjectGuide()
+	if err != nil {
+		return err
 	}
 
 	var worktreeDir string
@@ -148,21 +157,21 @@ func runDescribeWithThinking(branch string, prRef string, llm string, thinking s
 		return fmt.Errorf("failed to get diff: %w", err)
 	}
 
-	contextPath, err := writeBranchDiffContextFile(worktreeDir, "origin/main", diff)
+	contextPath, err := writeBranchDiffContextFile(worktreeDir, guide, "origin/main", diff)
 	if err != nil {
 		return fmt.Errorf("failed to write diff context: %w", err)
 	}
 
-	prompt := fmt.Sprintf(`Generate a Pull Request title and description for this branch. The project context and diff against origin/main are in the file %s in the current directory. Read that file before writing. If the project context points to domain-specific context files relevant to the diff, read those files too.
+	prompt := fmt.Sprintf(`Generate a Pull Request title and description for this branch. The project guide, project context, and diff against origin/main are in the file %s in the current directory. Read the project guide first and write against it. Then read the project context; if it points to domain-specific context files relevant to the diff, read those files too.
 
 You MUST wrap your final output entirely within <pr_description> tags. Inside the tags, format the output as Markdown, with the PR title as an H1 heading (e.g. # My Title), followed by the description body. Do not output JSON.
 
 Follow these PR description guidelines:
 %s`, contextPath, guidelines)
 
-	ui.Step("Running %s in read-only mode", ui.Emphasize(llm))
+	ui.Step("Running %s in read-only mode", ui.Emphasize(spec.String()))
 
-	response, err := ai.RunWithOptions(worktreeDir, prompt, llm, ai.ReadOnly, ai.RunOptions{ShowProgress: true, Verbose: true, Thinking: thinking, ThinkingExplicit: thinkingExplicit})
+	response, err := ai.RunWithOptions(worktreeDir, prompt, spec, ai.ReadOnly, ai.RunOptions{ShowProgress: true, Verbose: true, Thinking: thinking, ThinkingExplicit: thinkingExplicit})
 	if err != nil {
 		return err
 	}

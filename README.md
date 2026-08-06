@@ -14,8 +14,28 @@ It installs a short `pr` command with a smart default plus two explicit workflow
 - GitHub CLI: `gh`
 - Go, if building from source
 - At least one supported LLM CLI available on `PATH`: `claude`, `codex`, `gemini`, or `opencode`
+- A `GUIDE.md` at the root of every repository you run `pr` in
 
 `setup.sh` can install Go and `gh` into your user directory if they are missing.
+
+## GUIDE.md
+
+`pr` refuses to run without a `GUIDE.md` at the root of the repository you invoke it from:
+
+```
+✗ no GUIDE.md at repository root /path/to/repo; symlink the canonical guide there before running pr
+```
+
+That file is the standard every run works to. The embedded prompts in `pkg/prompts/guidelines/` carry structure and flow only: what to read, what is in scope, the rounds, and the output contract. Everything about what makes a finding worth reporting, what to ignore, what blocks a merge, and how a description reads comes from `GUIDE.md`. Change the guide and every review changes with it, with no rebuild.
+
+Keep one canonical copy and symlink it into each project:
+
+```sh
+ln -s ../dotfiles/GUIDE.md GUIDE.md
+echo GUIDE.md >> .gitignore
+```
+
+It is read from the repository you invoke `pr` in, never from the PR worktree, so a pull request cannot rewrite the standard it is reviewed against.
 
 ## Install
 
@@ -89,6 +109,23 @@ Use a different pair:
 pr review --pr 123 --llm gemini,codex
 ```
 
+### Picking models
+
+Each reviewer is a provider, optionally with a model: `<provider>` or `<provider>:<model>`. The model is passed straight through to that provider CLI's `--model` flag, so any value the CLI accepts works (aliases or full model ids). Without a model, the provider CLI picks its own default.
+
+Run the same provider twice under two different models:
+
+```sh
+pr review --pr 123 --llm claude:opus,claude:sonnet
+pr review --pr 123 --llm claude:claude-opus-5,claude:claude-sonnet-5
+```
+
+The two reviewers stay labelled by their full spec (`claude:opus`, `claude:sonnet`) in progress output and in the cross-check and synthesis prompts. `--llm` on `pr describe` takes the same spec:
+
+```sh
+pr describe --llm claude:opus
+```
+
 Thinking/reasoning effort defaults to `high` where the selected provider supports it:
 
 ```sh
@@ -99,8 +136,8 @@ pr review --pr 123 --think xhigh
 
 Provider mapping:
 
-- `codex`: does not pass `--model`, so Codex uses its default model; passes `model_reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`).
-- `claude`: does not pass `--model`, so Claude Code uses its default model; passes `--effort` (`low`, `medium`, `high`, `xhigh`, `max`).
+- `codex`: passes `--model` only when the spec names one, otherwise Codex uses its default model; passes `model_reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`).
+- `claude`: passes `--model` only when the spec names one, otherwise Claude Code uses its default model; passes `--effort` (`low`, `medium`, `high`, `xhigh`, `max`).
 - `opencode`: passes `--variant` with the provided value.
 - `gemini`: the implicit `high` default is ignored; explicitly using `--think` with Gemini returns an error.
 
@@ -113,6 +150,8 @@ With two LLMs, `pr review` runs three rounds:
 3. The first LLM synthesizes one final JSON review report, which the CLI prints as Markdown.
 
 With one LLM, `pr review` runs a single standard review.
+
+Every round is judged against your `GUIDE.md`, which is embedded in the context file the reviewers read. The prompts decide the shape of the work; the guide decides the verdict.
 
 ## Configuration
 

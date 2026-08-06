@@ -9,7 +9,10 @@ import (
 	"pr/pkg/git"
 )
 
-const projectContextFilename = "CONTEXT.md"
+const (
+	projectContextFilename = "CONTEXT.md"
+	projectGuideFilename   = "GUIDE.md"
+)
 
 type projectContext struct {
 	source  string
@@ -17,14 +20,61 @@ type projectContext struct {
 	found   bool
 }
 
-func writeBranchDiffContextFile(dir string, baseRef string, diff string) (string, error) {
+// projectGuide is the canonical engineering guide for the repository `pr` was
+// invoked from. It is required: every prompt is written against it, so a run
+// without it would silently review or describe against no standard at all.
+type projectGuide struct {
+	source  string
+	content string
+}
+
+// requireProjectGuide reads GUIDE.md from the root of the repository the
+// command was invoked in, following the symlink projects keep there. It never
+// reads the guide from a PR worktree: the symlink is gitignored, so a worktree
+// copy would be absent, and a checked-in one would let a PR rewrite the
+// standard it is reviewed against.
+func requireProjectGuide() (projectGuide, error) {
+	root, err := git.GetRepositoryRoot()
+	if err != nil {
+		return projectGuide{}, fmt.Errorf("failed to get repo root: %w", err)
+	}
+
+	path := filepath.Join(root, projectGuideFilename)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return projectGuide{}, fmt.Errorf("no %s at repository root %s; symlink the canonical guide there before running pr", projectGuideFilename, root)
+		}
+		return projectGuide{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	if strings.TrimSpace(string(content)) == "" {
+		return projectGuide{}, fmt.Errorf("%s is empty", path)
+	}
+
+	return projectGuide{source: projectGuideFilename, content: string(content)}, nil
+}
+
+func renderProjectGuideSection(guide projectGuide) string {
+	var sb strings.Builder
+	sb.WriteString("## Project Guide\n\n")
+	sb.WriteString("Source: `")
+	sb.WriteString(guide.source)
+	sb.WriteString("`.\n\n")
+	sb.WriteString("This guide is the standard for this task. Read it before anything else and apply it as written.\n\n")
+	sb.WriteString("<project_guide>\n")
+	sb.WriteString(strings.TrimSpace(guide.content))
+	sb.WriteString("\n</project_guide>\n\n")
+	return sb.String()
+}
+
+func writeBranchDiffContextFile(dir string, guide projectGuide, baseRef string, diff string) (string, error) {
 	filename := filepath.Join(dir, ".pr-diff-context.md")
 	ctx, err := loadWorktreeProjectContext(dir)
 	if err != nil {
 		return "", err
 	}
 
-	content := buildBranchDiffContextContent(ctx, baseRef, diff)
+	content := buildBranchDiffContextContent(guide, ctx, baseRef, diff)
 	if err := os.WriteFile(filename, []byte(content), 0o600); err != nil {
 		return "", fmt.Errorf("write branch diff context file: %w", err)
 	}
@@ -32,23 +82,9 @@ func writeBranchDiffContextFile(dir string, baseRef string, diff string) (string
 	return filepath.Base(filename), nil
 }
 
-func writePullRequestContextFileAs(dir string, name string, pr git.PullRequest, diff string) (string, error) {
-	filename := filepath.Join(dir, name)
-	content, err := buildPullRequestContextContent(dir, pr, diff, true)
-	if err != nil {
-		return "", err
-	}
-
-	if err := os.WriteFile(filename, []byte(content), 0o600); err != nil {
-		return "", fmt.Errorf("write PR context file: %w", err)
-	}
-
-	return filepath.Base(filename), nil
-}
-
-func writePullRequestContextFile(dir string, pr git.PullRequest, diff string) (string, error) {
+func writePullRequestContextFile(dir string, guide projectGuide, pr git.PullRequest, diff string) (string, error) {
 	filename := filepath.Join(dir, ".pr-context.md")
-	content, err := buildPullRequestContextContent(dir, pr, diff, true)
+	content, err := buildPullRequestContextContent(dir, guide, pr, diff)
 	if err != nil {
 		return "", err
 	}
@@ -60,23 +96,10 @@ func writePullRequestContextFile(dir string, pr git.PullRequest, diff string) (s
 	return filepath.Base(filename), nil
 }
 
-func writePullRequestContextFileWithoutDiff(dir string, pr git.PullRequest) (string, error) {
-	filename := filepath.Join(dir, ".pr-context.md")
-	content, err := buildPullRequestContextContent(dir, pr, "", false)
-	if err != nil {
-		return "", err
-	}
-
-	if err := os.WriteFile(filename, []byte(content), 0o600); err != nil {
-		return "", fmt.Errorf("write PR context file: %w", err)
-	}
-
-	return filepath.Base(filename), nil
-}
-
-func buildBranchDiffContextContent(ctx projectContext, baseRef string, diff string) string {
+func buildBranchDiffContextContent(guide projectGuide, ctx projectContext, baseRef string, diff string) string {
 	var sb strings.Builder
 	sb.WriteString("# Branch Diff Context\n\n")
+	sb.WriteString(renderProjectGuideSection(guide))
 	sb.WriteString(renderProjectContextSection(ctx))
 	sb.WriteString(fmt.Sprintf("## Branch Diff (against %s)\n\n", baseRef))
 	sb.WriteString("```diff\n")
@@ -85,7 +108,7 @@ func buildBranchDiffContextContent(ctx projectContext, baseRef string, diff stri
 	return sb.String()
 }
 
-func buildPullRequestContextContent(dir string, pr git.PullRequest, diff string, includeDiff bool) (string, error) {
+func buildPullRequestContextContent(dir string, guide projectGuide, pr git.PullRequest, diff string) (string, error) {
 	ctx, err := loadPullRequestProjectContext(dir, pr.BaseRefName)
 	if err != nil {
 		return "", err
@@ -110,6 +133,7 @@ func buildPullRequestContextContent(dir string, pr git.PullRequest, diff string,
 	sb.WriteString("- Merged at: ")
 	sb.WriteString(pr.MergedAt)
 	sb.WriteString("\n\n")
+	sb.WriteString(renderProjectGuideSection(guide))
 	sb.WriteString(renderProjectContextSection(ctx))
 	sb.WriteString("## Title\n\n")
 	sb.WriteString(pr.Title)
@@ -118,12 +142,10 @@ func buildPullRequestContextContent(dir string, pr git.PullRequest, diff string,
 	sb.WriteString(strings.TrimSpace(pr.Body))
 	sb.WriteString("\n")
 
-	if includeDiff {
-		sb.WriteString("\n## Diff\n\n")
-		sb.WriteString("```diff\n")
-		sb.WriteString(diff)
-		sb.WriteString("\n```\n")
-	}
+	sb.WriteString("\n## Diff\n\n")
+	sb.WriteString("```diff\n")
+	sb.WriteString(diff)
+	sb.WriteString("\n```\n")
 
 	return sb.String(), nil
 }

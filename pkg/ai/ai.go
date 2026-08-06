@@ -21,6 +21,41 @@ type Response struct {
 	RawTransport string
 }
 
+// Spec identifies one LLM run: a supported provider CLI and an optional model
+// override for that CLI. An empty Model means the provider CLI picks its own
+// default model.
+type Spec struct {
+	Provider string
+	Model    string
+}
+
+// ParseSpec parses a "<provider>" or "<provider>:<model>" spec.
+func ParseSpec(value string) (Spec, error) {
+	trimmed := strings.TrimSpace(value)
+	provider, model, hasModel := strings.Cut(trimmed, ":")
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+
+	switch provider {
+	case "claude", "codex", "gemini", "opencode":
+	default:
+		return Spec{}, fmt.Errorf("unsupported llm %q", provider)
+	}
+
+	if hasModel && model == "" {
+		return Spec{}, fmt.Errorf("llm %q is missing a model after \":\"", trimmed)
+	}
+
+	return Spec{Provider: provider, Model: model}, nil
+}
+
+func (s Spec) String() string {
+	if s.Model == "" {
+		return s.Provider
+	}
+	return s.Provider + ":" + s.Model
+}
+
 type Mode string
 
 const (
@@ -76,8 +111,16 @@ func (m Mode) StatusText() string {
 
 type commandArtifacts struct {
 	provider   string
+	model      string
 	outputFile string
 	mode       Mode
+}
+
+func (a commandArtifacts) label() string {
+	if a.model == "" {
+		return a.provider
+	}
+	return a.provider + ":" + a.model
 }
 
 type RunOptions struct {
@@ -89,11 +132,11 @@ type RunOptions struct {
 }
 
 // Run runs the AI agent in the specific worktree directory and returns its normalized response.
-func Run(dir string, prompt string, llm string, mode Mode) (Response, error) {
-	return RunWithOptions(dir, prompt, llm, mode, RunOptions{ShowProgress: true, Verbose: true})
+func Run(dir string, prompt string, spec Spec, mode Mode) (Response, error) {
+	return RunWithOptions(dir, prompt, spec, mode, RunOptions{ShowProgress: true, Verbose: true})
 }
 
-func RunWithOptions(dir string, prompt string, llm string, mode Mode, opts RunOptions) (Response, error) {
+func RunWithOptions(dir string, prompt string, spec Spec, mode Mode, opts RunOptions) (Response, error) {
 	var ctx context.Context
 	var cancel context.CancelFunc
 	if opts.Timeout > 0 {
@@ -103,7 +146,7 @@ func RunWithOptions(dir string, prompt string, llm string, mode Mode, opts RunOp
 	}
 	defer cancel()
 
-	cmd, artifacts, cleanup, err := buildCommand(ctx, prompt, llm, mode, opts)
+	cmd, artifacts, cleanup, err := buildCommand(ctx, prompt, spec, mode, opts)
 	if err != nil {
 		return Response{}, err
 	}
@@ -143,7 +186,7 @@ func RunWithOptions(dir string, prompt string, llm string, mode Mode, opts RunOp
 					close(finished)
 					return
 				case <-time.After(100 * time.Millisecond):
-					fmt.Fprintf(os.Stderr, "\r\033[K%s AI (%s/%s) %s", spinner[i], artifacts.provider, artifacts.mode.ColoredLabel(), artifacts.mode.StatusText())
+					fmt.Fprintf(os.Stderr, "\r\033[K%s AI (%s/%s) %s", spinner[i], artifacts.label(), artifacts.mode.ColoredLabel(), artifacts.mode.StatusText())
 					i = (i + 1) % len(spinner)
 				}
 			}
@@ -178,23 +221,26 @@ func RunWithOptions(dir string, prompt string, llm string, mode Mode, opts RunOp
 	return response, nil
 }
 
-func buildCommand(ctx context.Context, prompt string, llm string, mode Mode, opts RunOptions) (*exec.Cmd, commandArtifacts, func(), error) {
+func buildCommand(ctx context.Context, prompt string, spec Spec, mode Mode, opts RunOptions) (*exec.Cmd, commandArtifacts, func(), error) {
 	thinking := normalizeThinking(opts.Thinking)
-	if err := ValidateThinking(llm, thinking, opts.ThinkingExplicit); err != nil {
+	if err := ValidateThinking(spec.Provider, thinking, opts.ThinkingExplicit); err != nil {
 		return nil, commandArtifacts{}, nil, err
 	}
 
-	switch llm {
+	switch spec.Provider {
 	case "gemini":
 		format := "json"
 		if opts.Verbose {
 			format = "stream-json"
 		}
 		args := []string{"-p", prompt, "--output-format", format}
+		if spec.Model != "" {
+			args = append(args, "--model", spec.Model)
+		}
 		if mode == Write {
 			args = append(args, "--approval-mode", "auto_edit")
 		}
-		return exec.CommandContext(ctx, "gemini", args...), commandArtifacts{provider: "gemini", mode: mode}, func() {}, nil
+		return exec.CommandContext(ctx, "gemini", args...), commandArtifacts{provider: "gemini", model: spec.Model, mode: mode}, func() {}, nil
 	case "codex":
 		outputFile, err := createTempOutputFile()
 		if err != nil {
@@ -206,6 +252,9 @@ func buildCommand(ctx context.Context, prompt string, llm string, mode Mode, opt
 		}
 
 		args := []string{"exec", "--color", "never", "--output-last-message", outputFile}
+		if spec.Model != "" {
+			args = append(args, "--model", spec.Model)
+		}
 		if thinking != "" {
 			args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", thinking))
 		}
@@ -215,16 +264,20 @@ func buildCommand(ctx context.Context, prompt string, llm string, mode Mode, opt
 		args = append(args, prompt)
 		return exec.CommandContext(ctx, "codex", args...), commandArtifacts{
 			provider:   "codex",
+			model:      spec.Model,
 			outputFile: outputFile,
 			mode:       mode,
 		}, cleanup, nil
 	case "opencode":
 		args := []string{"run", "--format", "json"}
+		if spec.Model != "" {
+			args = append(args, "--model", spec.Model)
+		}
 		if thinking != "" {
 			args = append(args, "--variant", thinking)
 		}
 		args = append(args, prompt)
-		return exec.CommandContext(ctx, "opencode", args...), commandArtifacts{provider: "opencode", mode: mode}, func() {}, nil
+		return exec.CommandContext(ctx, "opencode", args...), commandArtifacts{provider: "opencode", model: spec.Model, mode: mode}, func() {}, nil
 	case "claude":
 		fallthrough
 	default:
@@ -233,6 +286,9 @@ func buildCommand(ctx context.Context, prompt string, llm string, mode Mode, opt
 			format = "stream-json"
 		}
 		args := []string{"-p", "--output-format", format}
+		if spec.Model != "" {
+			args = append(args, "--model", spec.Model)
+		}
 		if thinking != "" {
 			args = append(args, "--effort", thinking)
 		}
@@ -243,7 +299,7 @@ func buildCommand(ctx context.Context, prompt string, llm string, mode Mode, opt
 			args = append(args, "--permission-mode", "acceptEdits")
 		}
 		args = append(args, prompt)
-		return exec.CommandContext(ctx, "claude", args...), commandArtifacts{provider: "claude", mode: mode}, func() {}, nil
+		return exec.CommandContext(ctx, "claude", args...), commandArtifacts{provider: "claude", model: spec.Model, mode: mode}, func() {}, nil
 	}
 }
 

@@ -3,7 +3,7 @@
 ## Metadata
 - Domain: prmate - personal pull request helper CLI
 - Primary audience: LLM agents working on this codebase, human contributors
-- Last updated: 2026-07-15
+- Last updated: 2026-08-06
 - Status: Active
 - Stability note: Sections marked `[STABLE]` should change rarely. Sections marked `[VOLATILE]` are expected to change often.
 
@@ -41,10 +41,21 @@ This file is the primary working context for the prmate project.
   - `pr`: smart default. Inspects the current branch; if no open GitHub PR exists, runs describe with `codex`; if an open PR exists, runs review with `codex,claude`. Accepts `--think`.
   - `pr describe`: generate a PR title/body from a branch diff, then create or update a GitHub PR after user confirmation. Accepts `--think`.
   - `pr review`: review an existing GitHub PR, with either one reviewer or a default two-reviewer cross-check and synthesis flow. Accepts `--think`.
-- Supported LLM CLI providers: `claude`, `codex`, `gemini`, `opencode`
+- Supported LLM CLI providers: `claude`, `codex`, `gemini`, `opencode`, each selectable as `<provider>` or `<provider>:<model>`
 - External runtime tools: `git`, `gh`, and at least one supported LLM CLI on `PATH`
 
 The codebase is intentionally small and package-oriented. `cmd/` owns user workflows. `pkg/git` wraps `git` and GitHub CLI operations. `pkg/ai` normalizes external LLM CLI calls. `pkg/prompts` embeds the Markdown prompt guidelines. `pkg/ui` owns terminal formatting and confirmation prompts. `pkg/config` reads and writes optional user configuration.
+
+### Where standards live
+
+There are two sources of instruction for every LLM run, and the split is deliberate:
+
+- `pkg/prompts/guidelines/*.md` own **structure and flow only**: what to read and in what order, what is in scope, the steps of each round, and the exact output contract. They carry no opinion about what good code or a good description looks like.
+- `GUIDE.md` at the repository root owns **judgment**: what counts as a finding, what to leave out, what blocks a merge, how a description reads. It is the user's canonical engineering guide, symlinked into each project from a dotfiles repo.
+
+`GUIDE.md` is required. `requireProjectGuide` reads it from the root of the repository the command was invoked in and returns an error when it is missing or empty, so `pr describe` and `pr review` refuse to run rather than silently working to no standard. It is read from the invocation repo, never from a PR worktree: the symlink is gitignored so a worktree copy would be absent, and a checked-in one would let a PR rewrite the standard it is reviewed against.
+
+When adding guidance, ask which of the two it is. Judgment goes in `GUIDE.md`, not in the embedded prompts.
 
 Highest-risk areas:
 - External CLI output contracts in `pkg/ai`, especially streamed JSON and JSONL parsing.
@@ -198,7 +209,7 @@ sequenceDiagram
 Key behavior:
 - Current-branch mode writes `.pr-diff-context.md` into the repo root and removes it on cleanup.
 - Explicit branch mode creates a temporary git worktree and removes it on cleanup.
-- `.pr-diff-context.md` embeds root `CONTEXT.md` before the branch diff when present and instructs the LLM to follow relevant domain-context pointers.
+- `.pr-diff-context.md` embeds root `GUIDE.md`, then root `CONTEXT.md` when present, then the branch diff, and instructs the LLM to read the guide first and follow relevant domain-context pointers.
 - The describe diff is generated against `origin/main` by current implementation.
 - The LLM must wrap final Markdown in `<pr_description>` tags. A fallback trims known Claude Code watermark lines and uses the raw message.
 - The first Markdown H1 becomes the PR title. Remaining Markdown becomes the PR body.
@@ -237,11 +248,13 @@ sequenceDiagram
 
 Key behavior:
 - `--pr` accepts a number or URL containing `/pull/<number>`.
-- Default providers are `codex,claude`.
-- At most two providers are supported. Duplicates are removed while preserving first-seen order.
+- Default reviewers are `codex,claude`.
+- Each `--llm` entry is an `ai.Spec`: `<provider>` or `<provider>:<model>`. `ai.ParseSpec` validates the provider against the closed set and requires a non-empty model after `:`. The model itself is passed through to the provider CLI unvalidated, since model names are external data.
+- At most two reviewers are supported. Duplicates are removed on the full spec string while preserving first-seen order, so `claude:opus,claude:sonnet` is two reviewers but `claude,claude` is one.
+- Reviewers are labelled by `Spec.String()` everywhere a name is user- or LLM-visible: progress lines, spinner statuses, failure notes, and the `provider="..."` attributes in cross-check and synthesis prompts. This is what keeps two models of one provider distinguishable to the synthesizer.
 - Review worktrees are detached.
 - `addWorktreeFromPullRequestHead` first tries `origin/<headRefName>`, then falls back to fetching `pull/<number>/head` into `refs/pr-tool/pr/<number>`.
-- `.pr-context.md` contains project context, PR metadata, title, body, and local diff against the PR base branch. Review prompts instruct the LLM to follow relevant domain-context pointers before reviewing, cross-checking, or synthesizing.
+- `.pr-context.md` contains the project guide, project context, PR metadata, title, body, and local diff against the PR base branch. Review prompts instruct the LLM to read the guide first, then follow relevant domain-context pointers before reviewing, cross-checking, or synthesizing.
 - For PR review, project context is read from `CONTEXT.md` on the PR base ref when possible (`origin/<base>` then `<base>`), then falls back to the checked-out worktree. This avoids treating contributor changes to root context as authoritative reviewer instructions.
 - Review output must parse to `ReviewReport` JSON. The CLI tolerates fenced JSON and extracts a balanced top-level object when possible.
 
@@ -257,16 +270,18 @@ type Response struct {
 }
 ```
 
-Provider command expectations:
-- Claude: `claude -p --output-format json` or `stream-json` in verbose mode. It intentionally does not pass `--model`, so Claude Code uses its default model for the run.
-- Gemini: `gemini -p <prompt> --output-format json` or `stream-json` in verbose mode.
-- Codex: `codex exec --color never --output-last-message <tempfile> <prompt>`, with `--json` in verbose mode. It intentionally does not pass `--model`, so Codex uses its default model for the run.
-- OpenCode: `opencode run --format json <prompt>`.
+`pkg/ai` takes an `ai.Spec{Provider, Model}` rather than a bare provider string. `Model` is empty unless the user asked for one, and every provider branch appends `--model <model>` only when it is set, so the default-model behavior is unchanged when no model is given.
 
-Thinking/reasoning effort mapping:
+Provider command expectations:
+- Claude: `claude -p --output-format json` or `stream-json` in verbose mode, plus `--model <model>` when the spec names one.
+- Gemini: `gemini -p <prompt> --output-format json` or `stream-json` in verbose mode, plus `--model <model>` when the spec names one.
+- Codex: `codex exec --color never --output-last-message <tempfile> <prompt>`, with `--json` in verbose mode, plus `--model <model>` when the spec names one.
+- OpenCode: `opencode run --format json <prompt>`, plus `--model <model>` when the spec names one (OpenCode expects `provider/model`).
+
+Thinking/reasoning effort mapping (validated per provider, independent of the model override):
 - User-facing flag: `--think <level>` (alias `--thinking`) on root `pr`, `pr describe`, and `pr review`. Default is `high`.
-- Codex: no model override is passed, so Codex uses its default model for the run; reasoning effort is passed as `-c model_reasoning_effort="<level>"`; accepted levels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
-- Claude: no model override is passed, so Claude Code uses its default model for the run; reasoning effort is passed as `--effort <level>`; accepted levels are `low`, `medium`, `high`, `xhigh`, `max`.
+- Codex: reasoning effort is passed as `-c model_reasoning_effort="<level>"`; accepted levels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
+- Claude: reasoning effort is passed as `--effort <level>`; accepted levels are `low`, `medium`, `high`, `xhigh`, `max`.
 - OpenCode: passed through as `--variant <level>` because OpenCode variants are provider/model-specific and may be custom.
 - Gemini: unsupported by current Gemini CLI adapter. The implicit default is ignored for Gemini, but explicitly setting `--think` with Gemini returns a clear error.
 
@@ -328,9 +343,12 @@ This tool passes PR title, PR body, local diff content, and selected worktree fi
 - Preserve worktree cleanup paths. Any new early return after worktree creation must still cleanup through `defer`.
 - Preserve `0600` permissions for context/config files containing PR or diff content.
 - Generated LLM context files should include root `CONTEXT.md` when present. PR review should prefer the base-ref version of `CONTEXT.md` over the PR-head version.
+- `GUIDE.md` stays required and stays read from the invocation repository root. Do not add a silent fallback, a default guide, or a worktree read path; a run with no guide must fail loudly.
+- Embedded prompt guidelines stay structure and flow only. Any rule about what makes a finding or a description good belongs in `GUIDE.md`.
 - `ReviewReport` JSON shape is a public internal contract between prompts and parser. Update prompt guidelines, parser, tests, and Markdown rendering together.
 - Keep prompt guidelines embedded through `pkg/prompts`; do not replace them with runtime file reads unless install and packaging behavior are redesigned.
-- Do not broaden LLM provider names in command parsing without adding provider adapter behavior and tests.
+- Do not broaden LLM provider names in command parsing without adding provider adapter behavior and tests. Provider names stay a closed set in `ai.ParseSpec`; model names stay pass-through.
+- Anything that names a reviewer to the user or to another LLM uses `Spec.String()`, never `Spec.Provider`. Two reviewers on one provider are only distinguishable by the full spec.
 - Do not add new thinking levels for Codex or Claude without checking provider docs/help and updating validation tests.
 - Avoid broad repository exploration in review prompts. The current review guidelines intentionally constrain agents to changed files and directly referenced code.
 
@@ -345,10 +363,11 @@ go test ./...
 ```
 
 Current package coverage:
-- `cmd`: prompt construction, LLM list parsing, JSON extraction, and invalid PR validation.
+- `cmd`: prompt construction, reviewer spec list parsing (including two models of one provider), JSON extraction, and invalid PR validation.
 - `cmd` smart default: no-open-PR vs open-PR dispatch behavior through injected operations.
 - `pkg/ai`: provider command construction, response parsing, mode labels, and output normalization.
 - `pkg/ai` thinking controls: provider-specific command arguments and unsupported-provider validation.
+- `pkg/ai` spec parsing: provider/model splitting, label formatting, and rejection of unknown providers or empty models.
 - `pkg/git`: PR reference parsing/list parsing, git diff helpers, branch/change detection, push behavior, PR ref fetch/delete helpers.
 - `pkg/prompts`: embedded guideline loading.
 - `pkg/ui`: color/no-color formatting.
@@ -429,7 +448,7 @@ Setup behavior:
 - `pr describe` currently diffs against `origin/main` only. If repositories use another default base branch, behavior may need to be generalized.
 - `git.FetchOrigin` calls are best effort in some worktree creation paths. This is intentional for local-only branches, but it means stale remotes can affect generated diffs.
 - `BranchExists` runs git in the current process directory rather than accepting an explicit repo path.
-- `cmd/pr_context.go` contains near-duplicate context writer functions. Keep changes synchronized if editing them.
+- Every `pr describe` and `pr review` run now requires `GUIDE.md` at the invocation repository root. A project without the symlink cannot use the tool until one is added.
 - `Write` mode exists in `pkg/ai`, but user-facing workflows currently use read-only LLM runs.
 - Tests do not cover live `gh pr create/edit/view`, authenticated GitHub behavior, or real LLM CLI execution.
 
@@ -445,7 +464,7 @@ Setup behavior:
 
 Potential improvements worth considering:
 - Support repository default base branch detection instead of hardcoded `origin/main` in `pr describe`.
-- Reduce duplication in PR context file writers.
+- Consider a `pr doctor` check that reports a missing `GUIDE.md` before a run rather than at run time.
 - Add explicit tests for OpenCode parsing and verbose streaming edge cases.
 - Add a non-interactive or dry-run mode if automation use cases become important.
 - Add integration smoke tests behind opt-in environment flags for `gh` and provider CLIs.

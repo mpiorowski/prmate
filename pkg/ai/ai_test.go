@@ -13,7 +13,7 @@ func TestBuildCommand(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		llm     string
+		spec    Spec
 		mode    Mode
 		opts    RunOptions
 		want    []string
@@ -21,60 +21,79 @@ func TestBuildCommand(t *testing.T) {
 	}{
 		{
 			name: "claude uses json print mode",
-			llm:  "claude",
+			spec: Spec{Provider: "claude"},
 			mode: ReadOnly,
 			want: []string{"claude", "-p", "--output-format", "json", "prompt"},
 		},
 		{
 			name: "claude write mode enables edit permissions",
-			llm:  "claude",
+			spec: Spec{Provider: "claude"},
 			mode: Write,
 			want: []string{"claude", "-p", "--output-format", "json", "--permission-mode", "acceptEdits", "prompt"},
 		},
 		{
 			name: "gemini uses json print mode",
-			llm:  "gemini",
+			spec: Spec{Provider: "gemini"},
 			mode: ReadOnly,
 			want: []string{"gemini", "-p", "prompt", "--output-format", "json"},
 		},
 		{
 			name: "gemini ignores implicit default thinking",
-			llm:  "gemini",
+			spec: Spec{Provider: "gemini"},
 			mode: ReadOnly,
 			opts: RunOptions{Thinking: "high"},
 			want: []string{"gemini", "-p", "prompt", "--output-format", "json"},
 		},
 		{
 			name:    "codex writes last message to a temp file",
-			llm:     "codex",
+			spec:    Spec{Provider: "codex"},
 			mode:    Write,
 			want:    []string{"codex", "exec", "--color", "never", "--output-last-message"},
 			cleanup: true,
 		},
 		{
 			name: "codex sets reasoning effort through config override",
-			llm:  "codex",
+			spec: Spec{Provider: "codex"},
 			mode: ReadOnly,
 			opts: RunOptions{Thinking: "HIGH"},
 			want: []string{"codex", "exec", "--color", "never", "--output-last-message"},
 		},
 		{
 			name: "claude sets effort",
-			llm:  "claude",
+			spec: Spec{Provider: "claude"},
 			mode: ReadOnly,
 			opts: RunOptions{Thinking: "xhigh"},
 			want: []string{"claude", "-p", "--output-format", "json", "--effort", "xhigh", "prompt"},
 		},
 		{
+			name: "claude sets model override",
+			spec: Spec{Provider: "claude", Model: "opus"},
+			mode: ReadOnly,
+			opts: RunOptions{Thinking: "high"},
+			want: []string{"claude", "-p", "--output-format", "json", "--model", "opus", "--effort", "high", "prompt"},
+		},
+		{
 			name: "opencode sets variant",
-			llm:  "opencode",
+			spec: Spec{Provider: "opencode"},
 			mode: ReadOnly,
 			opts: RunOptions{Thinking: "max"},
 			want: []string{"opencode", "run", "--format", "json", "--variant", "max", "prompt"},
 		},
 		{
+			name: "opencode sets model override",
+			spec: Spec{Provider: "opencode", Model: "anthropic/claude-opus-5"},
+			mode: ReadOnly,
+			want: []string{"opencode", "run", "--format", "json", "--model", "anthropic/claude-opus-5", "prompt"},
+		},
+		{
+			name: "gemini sets model override",
+			spec: Spec{Provider: "gemini", Model: "gemini-pro"},
+			mode: ReadOnly,
+			want: []string{"gemini", "-p", "prompt", "--output-format", "json", "--model", "gemini-pro"},
+		},
+		{
 			name: "unknown llm falls back to claude",
-			llm:  "unknown",
+			spec: Spec{Provider: "unknown"},
 			mode: ReadOnly,
 			want: []string{"claude", "-p", "--output-format", "json", "prompt"},
 		},
@@ -85,7 +104,7 @@ func TestBuildCommand(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd, artifacts, cleanup, err := buildCommand(context.Background(), "prompt", tt.llm, tt.mode, tt.opts)
+			cmd, artifacts, cleanup, err := buildCommand(context.Background(), "prompt", tt.spec, tt.mode, tt.opts)
 			if err != nil {
 				t.Fatalf("buildCommand returned error: %v", err)
 			}
@@ -131,12 +150,12 @@ func TestBuildCommandRejectsUnsupportedThinking(t *testing.T) {
 
 	tests := []struct {
 		name string
-		llm  string
+		spec Spec
 		want string
 	}{
-		{name: "gemini unsupported", llm: "gemini", want: "not supported"},
-		{name: "codex invalid", llm: "codex", want: "unsupported thinking level"},
-		{name: "claude invalid", llm: "claude", want: "unsupported thinking level"},
+		{name: "gemini unsupported", spec: Spec{Provider: "gemini"}, want: "not supported"},
+		{name: "codex invalid", spec: Spec{Provider: "codex"}, want: "unsupported thinking level"},
+		{name: "claude invalid", spec: Spec{Provider: "claude"}, want: "unsupported thinking level"},
 	}
 
 	for _, tt := range tests {
@@ -144,7 +163,7 @@ func TestBuildCommandRejectsUnsupportedThinking(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, _, cleanup, err := buildCommand(context.Background(), "prompt", tt.llm, ReadOnly, RunOptions{Thinking: "turbo", ThinkingExplicit: true})
+			_, _, cleanup, err := buildCommand(context.Background(), "prompt", tt.spec, ReadOnly, RunOptions{Thinking: "turbo", ThinkingExplicit: true})
 			if cleanup != nil {
 				cleanup()
 			}
@@ -268,6 +287,71 @@ func TestNormalizeOutput(t *testing.T) {
 	got := normalizeOutput("\n  hello world  \n\n")
 	if got != "hello world" {
 		t.Fatalf("got %q, want %q", got, "hello world")
+	}
+}
+
+func TestParseSpec(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		value     string
+		want      Spec
+		wantLabel string
+	}{
+		{name: "provider only", value: "claude", want: Spec{Provider: "claude"}, wantLabel: "claude"},
+		{name: "trims spaces", value: "  codex  ", want: Spec{Provider: "codex"}, wantLabel: "codex"},
+		{name: "provider and model alias", value: "claude:opus", want: Spec{Provider: "claude", Model: "opus"}, wantLabel: "claude:opus"},
+		{name: "provider and full model id", value: "claude:claude-sonnet-5", want: Spec{Provider: "claude", Model: "claude-sonnet-5"}, wantLabel: "claude:claude-sonnet-5"},
+		{name: "opencode provider-qualified model", value: "opencode:anthropic/claude-opus-5", want: Spec{Provider: "opencode", Model: "anthropic/claude-opus-5"}, wantLabel: "opencode:anthropic/claude-opus-5"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ParseSpec(tt.value)
+			if err != nil {
+				t.Fatalf("ParseSpec returned error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("got %#v, want %#v", got, tt.want)
+			}
+			if got.String() != tt.wantLabel {
+				t.Fatalf("label = %q, want %q", got.String(), tt.wantLabel)
+			}
+		})
+	}
+}
+
+func TestParseSpecRejectsInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "unknown provider", value: "unknown", want: "unsupported llm"},
+		{name: "unknown provider with model", value: "unknown:opus", want: "unsupported llm"},
+		{name: "empty model", value: "claude:", want: "missing a model"},
+		{name: "empty value", value: "", want: "unsupported llm"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := ParseSpec(tt.value)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
+			}
+		})
 	}
 }
 

@@ -1,18 +1,30 @@
-# Review synthesis guidelines
+# Review synthesis flow
 
-Produce the final review from two independent reviews and two cross-checks. The result should be tighter than a raw union of all findings.
+Produce the final review from two independent reviews and two cross-checks.
 
-## Task
+## Read first
 
-- Keep findings that are validated by the code and have real impact.
-- Drop false positives, speculative concerns, duplicate findings, and low-value nits.
-- Merge duplicate findings into one clear issue.
-- Adjust severity and verdict based on the final issue list.
-- When reviewers disagree, use the PR context and changed code to make a concrete call.
+1. The `<project_guide>` block in the PR context file. It decides which
+   findings belong in the final report and what the verdict must be.
+2. The `<project_context>` block, the PR title, the description, and the diff
+   in the same file.
+
+## Steps
+
+1. Keep the findings the changed code supports and the guide qualifies.
+2. Drop the rest, including duplicates that add nothing.
+3. Merge overlapping findings into one issue.
+4. Where the reviewers disagree, settle it against the changed code and say
+   which way you went in the issue description.
+5. Set severity and verdict from the final issue list, not from the inputs.
+
+The result is one self-contained report. Every issue must be actionable without
+reading the intermediate reviews, and nothing may reference them.
 
 ## Required output
 
-Return JSON only. Do not wrap it in prose unless you must place it in a fenced `json` block.
+Return JSON only. Do not wrap it in prose unless you must place it in a fenced
+`json` block.
 
 ```json
 {
@@ -33,10 +45,10 @@ Return JSON only. Do not wrap it in prose unless you must place it in a fenced `
 }
 ```
 
-## Output rules
+## Field rules
 
-- Prefer fewer, higher-confidence findings over many uncertain ones.
-- Do not include an issue unless the changed code supports it.
-- Every issue should be actionable without needing to read the intermediate reviews.
-- Use `NEEDS_CHANGES` for blocking correctness, security, data integrity, or breaking-change issues.
-- Keep the summary concise.
+- `verdict`, `severity`, and `type` accept only the values listed above. The
+  project guide decides which value a given finding warrants.
+- `location` is `path/to/file:line`.
+- `issues` is an empty array when there is nothing to report.
+- Keep `summary` and each `positives` entry to one short line.

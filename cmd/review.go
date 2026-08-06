@@ -32,19 +32,19 @@ type ReviewReport struct {
 }
 
 type reviewRunResult struct {
-	llm      string
+	spec     ai.Spec
 	report   *ReviewReport
 	err      error
 	response ai.Response
 }
 
 type promptRun struct {
-	llm    string
+	spec   ai.Spec
 	prompt string
 }
 
 type textRunResult struct {
-	llm      string
+	spec     ai.Spec
 	output   string
 	err      error
 	response ai.Response
@@ -64,7 +64,7 @@ func ReviewCommand() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:    "llm",
-				Usage:   "LLM(s) to use. One provider runs a standard review; two comma-separated providers cross-check and merge findings. Options: claude, gemini, codex, opencode",
+				Usage:   "LLM(s) to use. One reviewer runs a standard review; two comma-separated reviewers cross-check and merge findings. Providers: claude, gemini, codex, opencode. Append :<model> to pick a model, e.g. claude:opus,claude:sonnet",
 				Value:   "codex,claude",
 				Aliases: []string{"l"},
 			},
@@ -82,17 +82,22 @@ func runReview(prValue string, llmValue string) error {
 }
 
 func runReviewWithThinking(prValue string, llmValue string, thinking string, thinkingExplicit bool) error {
-	llms, err := parseLLMList(llmValue)
+	specs, err := parseLLMSpecs(llmValue)
 	if err != nil {
 		return err
 	}
-	if err := validateThinkingForLLMs(llms, thinking, thinkingExplicit); err != nil {
+	if err := validateThinkingForSpecs(specs, thinking, thinkingExplicit); err != nil {
 		return err
 	}
 
 	prRef, ok := git.ParsePullRequestRef(prValue)
 	if !ok {
 		return fmt.Errorf("--pr must be a GitHub PR number or PR URL")
+	}
+
+	guide, err := requireProjectGuide()
+	if err != nil {
+		return err
 	}
 
 	ui.Step("Reviewing pull request %s", ui.Emphasize(prRef))
@@ -116,15 +121,15 @@ func runReviewWithThinking(prValue string, llmValue string, thinking string, thi
 		return err
 	}
 
-	contextPath, err := writePullRequestContextFile(tempDir, pr, diff)
+	contextPath, err := writePullRequestContextFile(tempDir, guide, pr, diff)
 	if err != nil {
 		return err
 	}
 
-	if len(llms) == 1 {
-		return runSingleReview(llms[0], tempDir, pr, contextPath, thinking, thinkingExplicit)
+	if len(specs) == 1 {
+		return runSingleReview(specs[0], tempDir, pr, contextPath, thinking, thinkingExplicit)
 	}
-	return runPairedReview(llms, tempDir, pr, contextPath, thinking, thinkingExplicit)
+	return runPairedReview(specs, tempDir, pr, contextPath, thinking, thinkingExplicit)
 }
 
 func extractJSON(input string) string {
@@ -215,7 +220,7 @@ func buildReviewPrompt(pr git.PullRequest, contextPath string, guidelines string
 
 Use the checked out PR branch in this worktree as the source of truth for the code under review.
 
-Use %q for additional context. That file contains project context, the PR title, PR description, and the local diff against the PR base branch. Read the project context and follow relevant domain-context pointers before reviewing.
+Use %q for additional context. That file contains the project guide, project context, the PR title, PR description, and the local diff against the PR base branch. Read the project guide first and review against it; then read the project context and follow relevant domain-context pointers.
 
 Treat the PR title and description as intent/context, but prioritize the actual code and tests in the worktree if they conflict.
 
@@ -228,7 +233,7 @@ func buildCrossCheckPrompt(pr git.PullRequest, contextPath string, reviewer stri
 
 Use the checked out PR branch in this worktree as the source of truth for the code under review.
 
-Use %q for additional context. That file contains project context, the PR title, PR description, and the local diff against the PR base branch. Read the project context and follow relevant domain-context pointers before cross-checking.
+Use %q for additional context. That file contains the project guide, project context, the PR title, PR description, and the local diff against the PR base branch. Read the project guide first and cross-check against it; then read the project context and follow relevant domain-context pointers.
 
 You are %s. You already produced this independent review:
 
@@ -252,18 +257,18 @@ func buildSynthesisPrompt(pr git.PullRequest, contextPath string, initialReviews
 
 Use the checked out PR branch in this worktree as the source of truth for the code under review.
 
-Use %q for additional context. That file contains project context, the PR title, PR description, and the local diff against the PR base branch. Read the project context and follow relevant domain-context pointers before synthesizing.
+Use %q for additional context. That file contains the project guide, project context, the PR title, PR description, and the local diff against the PR base branch. Read the project guide first and synthesize against it; then read the project context and follow relevant domain-context pointers.
 
 The reviewers first produced independent reviews, then each reviewer cross-checked the other review.
 
 `, pr.Number, contextPath))
 
 	for _, result := range initialReviews {
-		sb.WriteString(fmt.Sprintf("<initial_review provider=\"%s\">\n%s\n</initial_review>\n\n", result.llm, result.response.FinalMessage))
+		sb.WriteString(fmt.Sprintf("<initial_review provider=\"%s\">\n%s\n</initial_review>\n\n", result.spec.String(), result.response.FinalMessage))
 	}
 
 	for _, result := range crossChecks {
-		sb.WriteString(fmt.Sprintf("<cross_check provider=\"%s\">\n%s\n</cross_check>\n\n", result.llm, result.output))
+		sb.WriteString(fmt.Sprintf("<cross_check provider=\"%s\">\n%s\n</cross_check>\n\n", result.spec.String(), result.output))
 	}
 
 	sb.WriteString("Follow these synthesis guidelines:\n")
@@ -271,40 +276,42 @@ The reviewers first produced independent reviews, then each reviewer cross-check
 	return sb.String()
 }
 
-func parseLLMList(value string) ([]string, error) {
+// parseLLMSpecs parses a comma-separated reviewer list. Each entry is a
+// provider ("claude") or a provider with a model override ("claude:opus"), so
+// the same provider can review twice under two different models.
+func parseLLMSpecs(value string) ([]ai.Spec, error) {
 	seen := map[string]struct{}{}
-	llms := []string{}
+	specs := []ai.Spec{}
 
 	for _, raw := range strings.Split(value, ",") {
-		llm := strings.TrimSpace(raw)
-		if llm == "" {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
 			continue
 		}
-		switch llm {
-		case "claude", "codex", "gemini", "opencode":
-		default:
-			return nil, fmt.Errorf("unsupported llm %q", llm)
+		spec, err := ai.ParseSpec(entry)
+		if err != nil {
+			return nil, err
 		}
-		if _, ok := seen[llm]; ok {
+		if _, ok := seen[spec.String()]; ok {
 			continue
 		}
-		seen[llm] = struct{}{}
-		llms = append(llms, llm)
+		seen[spec.String()] = struct{}{}
+		specs = append(specs, spec)
 	}
 
-	if len(llms) == 0 {
+	if len(specs) == 0 {
 		return nil, fmt.Errorf("at least one llm is required")
 	}
-	if len(llms) > 2 {
+	if len(specs) > 2 {
 		return nil, fmt.Errorf("at most 2 llms are supported")
 	}
 
-	return llms, nil
+	return specs, nil
 }
 
-func validateThinkingForLLMs(llms []string, thinking string, thinkingExplicit bool) error {
-	for _, llm := range llms {
-		if err := ai.ValidateThinking(llm, thinking, thinkingExplicit); err != nil {
+func validateThinkingForSpecs(specs []ai.Spec, thinking string, thinkingExplicit bool) error {
+	for _, spec := range specs {
+		if err := ai.ValidateThinking(spec.Provider, thinking, thinkingExplicit); err != nil {
 			return err
 		}
 	}
@@ -320,16 +327,16 @@ func parseReviewReport(response ai.Response) (*ReviewReport, error) {
 	return &report, nil
 }
 
-func runSingleReview(llm string, tempDir string, pr git.PullRequest, contextPath string, thinking string, thinkingExplicit bool) error {
+func runSingleReview(spec ai.Spec, tempDir string, pr git.PullRequest, contextPath string, thinking string, thinkingExplicit bool) error {
 	guidelines, err := prompts.Load("review")
 	if err != nil {
 		return fmt.Errorf("failed to load review guidelines: %w", err)
 	}
 
 	prompt := buildReviewPrompt(pr, contextPath, guidelines)
-	ui.Step("Running review with %s", ui.Emphasize(llm))
+	ui.Step("Running review with %s", ui.Emphasize(spec.String()))
 
-	results := runReviews([]string{llm}, tempDir, prompt, true, thinking, thinkingExplicit)
+	results := runReviews([]ai.Spec{spec}, tempDir, prompt, true, thinking, thinkingExplicit)
 	result := results[0]
 	if result.err != nil {
 		return reportReviewFailure(result)
@@ -340,7 +347,7 @@ func runSingleReview(llm string, tempDir string, pr git.PullRequest, contextPath
 	return nil
 }
 
-func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextPath string, thinking string, thinkingExplicit bool) error {
+func runPairedReview(specs []ai.Spec, tempDir string, pr git.PullRequest, contextPath string, thinking string, thinkingExplicit bool) error {
 	reviewGuidelines, err := prompts.Load("review")
 	if err != nil {
 		return fmt.Errorf("failed to load review guidelines: %w", err)
@@ -354,9 +361,9 @@ func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextP
 		return fmt.Errorf("failed to load synthesis guidelines: %w", err)
 	}
 
-	ui.Step("Round 1/3: running independent reviews with %s and %s", ui.Emphasize(llms[0]), ui.Emphasize(llms[1]))
+	ui.Step("Round 1/3: running independent reviews with %s and %s", ui.Emphasize(specs[0].String()), ui.Emphasize(specs[1].String()))
 	initialPrompt := buildReviewPrompt(pr, contextPath, reviewGuidelines)
-	initialReviews := runReviews(llms, tempDir, initialPrompt, false, thinking, thinkingExplicit)
+	initialReviews := runReviews(specs, tempDir, initialPrompt, false, thinking, thinkingExplicit)
 	for _, result := range initialReviews {
 		if result.err != nil {
 			return reportReviewFailure(result)
@@ -366,25 +373,25 @@ func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextP
 	ui.Step("Round 2/3: cross-checking findings both ways")
 	crossCheckPrompts := []promptRun{
 		{
-			llm: llms[0],
+			spec: specs[0],
 			prompt: buildCrossCheckPrompt(
 				pr,
 				contextPath,
-				llms[0],
+				specs[0].String(),
 				initialReviews[0].response.FinalMessage,
-				llms[1],
+				specs[1].String(),
 				initialReviews[1].response.FinalMessage,
 				crossCheckGuidelines,
 			),
 		},
 		{
-			llm: llms[1],
+			spec: specs[1],
 			prompt: buildCrossCheckPrompt(
 				pr,
 				contextPath,
-				llms[1],
+				specs[1].String(),
 				initialReviews[1].response.FinalMessage,
-				llms[0],
+				specs[0].String(),
 				initialReviews[0].response.FinalMessage,
 				crossCheckGuidelines,
 			),
@@ -397,9 +404,9 @@ func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextP
 		}
 	}
 
-	ui.Step("Round 3/3: merging validated findings with %s", ui.Emphasize(llms[0]))
+	ui.Step("Round 3/3: merging validated findings with %s", ui.Emphasize(specs[0].String()))
 	synthesisPrompt := buildSynthesisPrompt(pr, contextPath, initialReviews, crossChecks, synthesisGuidelines)
-	response, err := ai.RunWithOptions(tempDir, synthesisPrompt, llms[0], ai.ReadOnly, ai.RunOptions{ShowProgress: true, Verbose: false, Thinking: thinking, ThinkingExplicit: thinkingExplicit})
+	response, err := ai.RunWithOptions(tempDir, synthesisPrompt, specs[0], ai.ReadOnly, ai.RunOptions{ShowProgress: true, Verbose: false, Thinking: thinking, ThinkingExplicit: thinkingExplicit})
 	if err != nil {
 		return fmt.Errorf("synthesis failed: %w", err)
 	}
@@ -407,7 +414,7 @@ func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextP
 	report, err := parseReviewReport(response)
 	if err != nil {
 		if strings.TrimSpace(response.FinalMessage) != "" {
-			ui.Note("%s final message:\n%s", llms[0], response.FinalMessage)
+			ui.Note("%s final message:\n%s", specs[0].String(), response.FinalMessage)
 		}
 		return fmt.Errorf("failed to parse synthesized review: %w", err)
 	}
@@ -417,16 +424,16 @@ func runPairedReview(llms []string, tempDir string, pr git.PullRequest, contextP
 	return nil
 }
 
-func runReviews(llms []string, tempDir string, prompt string, verbose bool, thinking string, thinkingExplicit bool) []reviewRunResult {
-	results := make([]reviewRunResult, len(llms))
-	prompts := make([]promptRun, len(llms))
-	for i, llm := range llms {
-		prompts[i] = promptRun{llm: llm, prompt: prompt}
+func runReviews(specs []ai.Spec, tempDir string, prompt string, verbose bool, thinking string, thinkingExplicit bool) []reviewRunResult {
+	results := make([]reviewRunResult, len(specs))
+	prompts := make([]promptRun, len(specs))
+	for i, spec := range specs {
+		prompts[i] = promptRun{spec: spec, prompt: prompt}
 	}
 
 	textResults := runTextPrompts(tempDir, "review", prompts, verbose, thinking, thinkingExplicit)
 	for i, textResult := range textResults {
-		result := reviewRunResult{llm: textResult.llm, err: textResult.err, response: textResult.response}
+		result := reviewRunResult{spec: textResult.spec, err: textResult.err, response: textResult.response}
 		if result.err == nil {
 			report, parseErr := parseReviewReport(textResult.response)
 			if parseErr != nil {
@@ -469,7 +476,7 @@ func runTextPrompts(tempDir string, label string, prompts []promptRun, verbose b
 					mu.Lock()
 					parts := make([]string, len(prompts))
 					for j, prompt := range prompts {
-						parts[j] = fmt.Sprintf("(%s/%s)=%s", prompt.llm, ai.ReadOnly.ColoredLabel(), statuses[j])
+						parts[j] = fmt.Sprintf("(%s/%s)=%s", prompt.spec.String(), ai.ReadOnly.ColoredLabel(), statuses[j])
 					}
 					mu.Unlock()
 					fmt.Fprintf(os.Stderr, "\r\033[K%s AI %s: %s", spinner[idx], label, strings.Join(parts, " | "))
@@ -487,8 +494,8 @@ func runTextPrompts(tempDir string, label string, prompts []promptRun, verbose b
 			statuses[idx] = "running"
 			mu.Unlock()
 
-			response, err := ai.RunWithOptions(tempDir, run.prompt, run.llm, ai.ReadOnly, ai.RunOptions{ShowProgress: false, Verbose: verbose, Thinking: thinking, ThinkingExplicit: thinkingExplicit})
-			result := textRunResult{llm: run.llm, response: response, err: err}
+			response, err := ai.RunWithOptions(tempDir, run.prompt, run.spec, ai.ReadOnly, ai.RunOptions{ShowProgress: false, Verbose: verbose, Thinking: thinking, ThinkingExplicit: thinkingExplicit})
+			result := textRunResult{spec: run.spec, response: response, err: err}
 			if err == nil {
 				result.output = response.FinalMessage
 			}
@@ -514,17 +521,17 @@ func runTextPrompts(tempDir string, label string, prompts []promptRun, verbose b
 }
 
 func reportReviewFailure(result reviewRunResult) error {
-	ui.Error("%s review failed: %v", result.llm, result.err)
+	ui.Error("%s review failed: %v", result.spec.String(), result.err)
 	if strings.TrimSpace(result.response.FinalMessage) != "" {
-		ui.Note("%s final message:\n%s", result.llm, result.response.FinalMessage)
+		ui.Note("%s final message:\n%s", result.spec.String(), result.response.FinalMessage)
 	}
 	return fmt.Errorf("review failed")
 }
 
 func reportTextFailure(label string, result textRunResult) error {
-	ui.Error("%s %s failed: %v", result.llm, label, result.err)
+	ui.Error("%s %s failed: %v", result.spec.String(), label, result.err)
 	if strings.TrimSpace(result.response.FinalMessage) != "" {
-		ui.Note("%s final message:\n%s", result.llm, result.response.FinalMessage)
+		ui.Note("%s final message:\n%s", result.spec.String(), result.response.FinalMessage)
 	}
 	return fmt.Errorf("%s failed", label)
 }

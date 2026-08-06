@@ -18,7 +18,8 @@ func TestBuildReviewPrompt(t *testing.T) {
 		"pull request #123",
 		"source of truth",
 		".pr-context.md",
-		"project context, the PR title, PR description, and the local diff",
+		"the project guide, project context, the PR title, PR description, and the local diff",
+		"Read the project guide first",
 		"Return JSON only.",
 	} {
 		if !strings.Contains(got, want) {
@@ -27,37 +28,94 @@ func TestBuildReviewPrompt(t *testing.T) {
 	}
 }
 
-func TestParseLLMList(t *testing.T) {
+func TestParseLLMSpecs(t *testing.T) {
 	t.Parallel()
 
-	got, err := parseLLMList("claude, codex,claude")
-	if err != nil {
-		t.Fatalf("parseLLMList returned error: %v", err)
+	tests := []struct {
+		name  string
+		value string
+		want  []ai.Spec
+	}{
+		{
+			name:  "dedupes repeated providers",
+			value: "claude, codex,claude",
+			want:  []ai.Spec{{Provider: "claude"}, {Provider: "codex"}},
+		},
+		{
+			name:  "accepts one",
+			value: "claude",
+			want:  []ai.Spec{{Provider: "claude"}},
+		},
+		{
+			name:  "accepts two providers",
+			value: "claude,gemini",
+			want:  []ai.Spec{{Provider: "claude"}, {Provider: "gemini"}},
+		},
+		{
+			name:  "accepts the same provider with two models",
+			value: "claude:opus,claude:sonnet",
+			want:  []ai.Spec{{Provider: "claude", Model: "opus"}, {Provider: "claude", Model: "sonnet"}},
+		},
+		{
+			name:  "keeps a bare provider and a model override apart",
+			value: "claude, claude:claude-opus-5",
+			want:  []ai.Spec{{Provider: "claude"}, {Provider: "claude", Model: "claude-opus-5"}},
+		},
+		{
+			name:  "dedupes repeated provider and model pairs",
+			value: "claude:opus,claude:opus",
+			want:  []ai.Spec{{Provider: "claude", Model: "opus"}},
+		},
 	}
 
-	want := []string{"claude", "codex"}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("got %v, want %v", got, want)
-		}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := parseLLMSpecs(tt.value)
+			if err != nil {
+				t.Fatalf("parseLLMSpecs returned error: %v", err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %v, want %v", got, tt.want)
+				}
+			}
+		})
 	}
 }
 
-func TestParseLLMListRejectsUnknownProvider(t *testing.T) {
+func TestParseLLMSpecsRejectsUnknownProvider(t *testing.T) {
 	t.Parallel()
 
-	if _, err := parseLLMList("claude,unknown"); err == nil {
+	if _, err := parseLLMSpecs("claude,unknown"); err == nil {
 		t.Fatal("expected error")
 	}
+	if _, err := parseLLMSpecs("unknown:opus"); err == nil {
+		t.Fatal("expected error for unknown provider with a model")
+	}
 }
 
-func TestParseLLMListRejectsMoreThanTwo(t *testing.T) {
+func TestParseLLMSpecsRejectsEmptyModel(t *testing.T) {
 	t.Parallel()
 
-	_, err := parseLLMList("claude,gemini,codex")
+	_, err := parseLLMSpecs("claude:")
+	if err == nil {
+		t.Fatal("expected error for empty model")
+	}
+	if !strings.Contains(err.Error(), "missing a model") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestParseLLMSpecsRejectsMoreThanTwo(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseLLMSpecs("claude,gemini,codex")
 	if err == nil {
 		t.Fatal("expected error for 3 LLMs")
 	}
@@ -66,43 +124,22 @@ func TestParseLLMListRejectsMoreThanTwo(t *testing.T) {
 	}
 }
 
-func TestParseLLMListAcceptsOne(t *testing.T) {
+func TestValidateThinkingForSpecs(t *testing.T) {
 	t.Parallel()
 
-	got, err := parseLLMList("claude")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err := validateThinkingForSpecs([]ai.Spec{{Provider: "codex"}, {Provider: "claude"}}, "xhigh", true); err != nil {
+		t.Fatalf("validateThinkingForSpecs returned error: %v", err)
 	}
-	if len(got) != 1 || got[0] != "claude" {
-		t.Fatalf("got %v, want [claude]", got)
+	if err := validateThinkingForSpecs([]ai.Spec{{Provider: "claude", Model: "opus"}}, "max", true); err != nil {
+		t.Fatalf("model override should not change thinking validation, got: %v", err)
 	}
-}
-
-func TestParseLLMListAcceptsTwo(t *testing.T) {
-	t.Parallel()
-
-	got, err := parseLLMList("claude,gemini")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(got) != 2 || got[0] != "claude" || got[1] != "gemini" {
-		t.Fatalf("got %v, want [claude gemini]", got)
-	}
-}
-
-func TestValidateThinkingForLLMs(t *testing.T) {
-	t.Parallel()
-
-	if err := validateThinkingForLLMs([]string{"codex", "claude"}, "xhigh", true); err != nil {
-		t.Fatalf("validateThinkingForLLMs returned error: %v", err)
-	}
-	if err := validateThinkingForLLMs([]string{"gemini"}, "high", false); err != nil {
+	if err := validateThinkingForSpecs([]ai.Spec{{Provider: "gemini"}}, "high", false); err != nil {
 		t.Fatalf("implicit gemini default should be ignored, got: %v", err)
 	}
-	if err := validateThinkingForLLMs([]string{"gemini"}, "high", true); err == nil {
+	if err := validateThinkingForSpecs([]ai.Spec{{Provider: "gemini"}}, "high", true); err == nil {
 		t.Fatal("expected gemini thinking error")
 	}
-	if err := validateThinkingForLLMs([]string{"codex"}, "max", true); err == nil {
+	if err := validateThinkingForSpecs([]ai.Spec{{Provider: "codex"}}, "max", true); err == nil {
 		t.Fatal("expected codex max thinking error")
 	}
 }
@@ -162,12 +199,12 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 
 	pr := git.PullRequest{Number: 99}
 	initialReviews := []reviewRunResult{
-		{llm: "claude", response: ai.Response{FinalMessage: "claude review"}},
-		{llm: "codex", response: ai.Response{FinalMessage: "codex review"}},
+		{spec: ai.Spec{Provider: "claude"}, response: ai.Response{FinalMessage: "claude review"}},
+		{spec: ai.Spec{Provider: "codex"}, response: ai.Response{FinalMessage: "codex review"}},
 	}
 	crossChecks := []textRunResult{
-		{llm: "claude", output: "claude checked codex"},
-		{llm: "codex", output: "codex checked claude"},
+		{spec: ai.Spec{Provider: "claude"}, output: "claude checked codex"},
+		{spec: ai.Spec{Provider: "codex"}, output: "codex checked claude"},
 	}
 
 	got := buildSynthesisPrompt(pr, ".pr-context.md", initialReviews, crossChecks, "synthesis guidelines")
@@ -184,6 +221,32 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 		"<cross_check provider=\"codex\">",
 		"codex checked claude",
 		"synthesis guidelines",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("synthesis prompt missing %q", want)
+		}
+	}
+}
+
+func TestBuildSynthesisPromptLabelsTwoModelsOfOneProvider(t *testing.T) {
+	t.Parallel()
+
+	initialReviews := []reviewRunResult{
+		{spec: ai.Spec{Provider: "claude", Model: "opus"}, response: ai.Response{FinalMessage: "opus review"}},
+		{spec: ai.Spec{Provider: "claude", Model: "sonnet"}, response: ai.Response{FinalMessage: "sonnet review"}},
+	}
+	crossChecks := []textRunResult{
+		{spec: ai.Spec{Provider: "claude", Model: "opus"}, output: "opus checked sonnet"},
+		{spec: ai.Spec{Provider: "claude", Model: "sonnet"}, output: "sonnet checked opus"},
+	}
+
+	got := buildSynthesisPrompt(git.PullRequest{Number: 7}, ".pr-context.md", initialReviews, crossChecks, "synthesis guidelines")
+
+	for _, want := range []string{
+		"<initial_review provider=\"claude:opus\">",
+		"<initial_review provider=\"claude:sonnet\">",
+		"<cross_check provider=\"claude:opus\">",
+		"<cross_check provider=\"claude:sonnet\">",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("synthesis prompt missing %q", want)
