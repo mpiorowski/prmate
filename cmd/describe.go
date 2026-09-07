@@ -106,6 +106,10 @@ func runDescribeWithThinking(branch string, prRef string, llm string, thinking s
 	if err != nil {
 		return err
 	}
+	baseRef, err := describeBaseRef(prRef, git.GetPullRequest, git.FetchOrigin)
+	if err != nil {
+		return err
+	}
 
 	var worktreeDir string
 	var cleanup func()
@@ -152,22 +156,23 @@ func runDescribeWithThinking(branch string, prRef string, llm string, thinking s
 
 	defer cleanup()
 
-	diff, err := git.DiffAgainstBase(worktreeDir, "origin/main")
+	ui.Step("Comparing against %s", ui.Emphasize(baseRef))
+	diff, err := git.DiffAgainstBase(worktreeDir, baseRef)
 	if err != nil {
 		return fmt.Errorf("failed to get diff: %w", err)
 	}
 
-	contextPath, err := writeBranchDiffContextFile(worktreeDir, guide, "origin/main", diff)
+	contextPath, err := writeBranchDiffContextFile(worktreeDir, guide, baseRef, diff)
 	if err != nil {
 		return fmt.Errorf("failed to write diff context: %w", err)
 	}
 
-	prompt := fmt.Sprintf(`Generate a Pull Request title and description for this branch. The project guide, project context, and diff against origin/main are in the file %s in the current directory. Read the project guide first and write against it. Then read the project context; if it points to domain-specific context files relevant to the diff, read those files too.
+	prompt := fmt.Sprintf(`Generate a Pull Request title and description for this branch. The project guide, project context, and diff against %s are in the file %s in the current directory. Read the project guide first and write against it. Then read the project context; if it points to domain-specific context files relevant to the diff, read those files too.
 
 You MUST wrap your final output entirely within <pr_description> tags. Inside the tags, format the output as Markdown, with the PR title as an H1 heading (e.g. # My Title), followed by the description body. Do not output JSON.
 
 Follow these PR description guidelines:
-%s`, contextPath, guidelines)
+%s`, baseRef, contextPath, guidelines)
 
 	ui.Step("Running %s in read-only mode", ui.Emphasize(spec.String()))
 
@@ -223,4 +228,22 @@ Follow these PR description guidelines:
 	}
 
 	return nil
+}
+
+func describeBaseRef(prRef string, getPR func(string) (git.PullRequest, error), fetch func(string) error) (string, error) {
+	if prRef == "" {
+		return "origin/main", nil
+	}
+	pr, err := getPR(prRef)
+	if err != nil {
+		return "", fmt.Errorf("failed to get PR metadata: %w", err)
+	}
+	if strings.TrimSpace(pr.BaseRefName) == "" {
+		return "", fmt.Errorf("PR %s has no base branch", prRef)
+	}
+	err = fetch(pr.BaseRefName)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch PR base branch %s: %w", pr.BaseRefName, err)
+	}
+	return "origin/" + pr.BaseRefName, nil
 }

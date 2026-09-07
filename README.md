@@ -85,6 +85,8 @@ Update an existing PR instead of creating a new one:
 pr describe --pr 123
 ```
 
+With `--pr`, the diff compares the selected local branch to the PR’s target branch fetched from GitHub, so stacked PR descriptions exclude parent changes. The command stops if that base cannot be fetched or resolved. Without `--pr`, the diff uses `origin/main`.
+
 Review a PR with the default paired flow:
 
 ```sh

@@ -484,11 +484,14 @@ func deleteRef(repoDir, ref string) error {
 }
 
 func DiffAgainstBase(path string, baseRef string) (string, error) {
-	candidates := []string{}
-	if strings.TrimSpace(baseRef) != "" {
-		candidates = append(candidates, "origin/"+baseRef+"...HEAD", baseRef+"...HEAD")
+	baseRef = strings.TrimSpace(baseRef)
+	if baseRef == "" {
+		baseRef = "main"
 	}
-	candidates = append(candidates, "origin/main...HEAD", "main...HEAD")
+	candidates := []string{baseRef + "...HEAD"}
+	if !strings.HasPrefix(baseRef, "origin/") && !strings.HasPrefix(baseRef, "refs/") {
+		candidates = append([]string{"origin/" + baseRef + "...HEAD"}, candidates...)
+	}
 
 	var lastErr error
 	for _, candidate := range candidates {

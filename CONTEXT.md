@@ -3,7 +3,7 @@
 ## Metadata
 - Domain: prmate - personal pull request helper CLI
 - Primary audience: LLM agents working on this codebase, human contributors
-- Last updated: 2026-08-06
+- Last updated: 2026-09-07
 - Status: Active
 - Stability note: Sections marked `[STABLE]` should change rarely. Sections marked `[VOLATILE]` are expected to change often.
 
@@ -191,7 +191,8 @@ sequenceDiagram
         D->>G: AddWorktree(branch)
         D->>D: Schedule worktree cleanup
     end
-    D->>G: DiffAgainstBase(worktree, origin/main)
+    D->>G: Resolve and fetch PR base when --pr is set
+    D->>G: DiffAgainstBase(worktree, resolved base)
     D->>D: Write .pr-diff-context.md with root CONTEXT.md + diff
     D->>A: RunWithOptions(..., ReadOnly)
     A-->>D: FinalMessage
@@ -210,7 +211,9 @@ Key behavior:
 - Current-branch mode writes `.pr-diff-context.md` into the repo root and removes it on cleanup.
 - Explicit branch mode creates a temporary git worktree and removes it on cleanup.
 - `.pr-diff-context.md` embeds root `GUIDE.md`, then root `CONTEXT.md` when present, then the branch diff, and instructs the LLM to read the guide first and follow relevant domain-context pointers.
-- The describe diff is generated against `origin/main` by current implementation.
+- With `--pr`, describe reads the PR base branch from GitHub and fetches it before diffing local HEAD against `origin/<base>` using the merge base. Metadata/fetch failures stop the command. The selected base is shown in progress output and used in the context file and prompt.
+- Without `--pr`, describe continues to use `origin/main`.
+- `DiffAgainstBase` never falls back to main when an explicit base cannot be resolved; this applies to both describe and review.
 - The LLM must wrap final Markdown in `<pr_description>` tags. A fallback trims known Claude Code watermark lines and uses the raw message.
 - The first Markdown H1 becomes the PR title. Remaining Markdown becomes the PR body.
 - Creating or updating a PR is gated by an interactive `ui.Confirm` prompt.
@@ -445,7 +448,7 @@ Setup behavior:
 
 - Provider CLIs are external and their JSON/JSONL output formats may change. `pkg/ai` is the compatibility boundary.
 - Provider thinking flags are not uniform: Codex and Claude leave model selection to their CLI defaults, Codex uses a config override for effort, Claude uses `--effort`, OpenCode uses variants, and Gemini currently has no supported mapping. The CLI defaults to `high` for supported providers and ignores that implicit default for Gemini.
-- `pr describe` currently diffs against `origin/main` only. If repositories use another default base branch, behavior may need to be generalized.
+- `pr describe` without `--pr` still uses `origin/main`; it does not infer a stacked parent or the repository default branch.
 - `git.FetchOrigin` calls are best effort in some worktree creation paths. This is intentional for local-only branches, but it means stale remotes can affect generated diffs.
 - `BranchExists` runs git in the current process directory rather than accepting an explicit repo path.
 - Every `pr describe` and `pr review` run now requires `GUIDE.md` at the invocation repository root. A project without the symlink cannot use the tool until one is added.
@@ -456,14 +459,14 @@ Setup behavior:
 
 ## 9. Current Work [VOLATILE]
 
-- No active in-repo implementation work is documented here.
+- Fixed stacked PR descriptions to use the existing PR target branch, including regression coverage for excluding parent changes and rejecting unavailable bases.
 
 ---
 
 ## 10. Future Work [VOLATILE]
 
 Potential improvements worth considering:
-- Support repository default base branch detection instead of hardcoded `origin/main` in `pr describe`.
+- Support repository default base branch detection instead of hardcoded `origin/main` in `pr describe` without `--pr`.
 - Consider a `pr doctor` check that reports a missing `GUIDE.md` before a run rather than at run time.
 - Add explicit tests for OpenCode parsing and verbose streaming edge cases.
 - Add a non-interactive or dry-run mode if automation use cases become important.

@@ -298,6 +298,43 @@ func TestDiffAgainstBase(t *testing.T) {
 	}
 }
 
+func TestDiffAgainstStackedBase(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+	runGitCommand(t, repo, "init", "-b", "main")
+	runGitCommand(t, repo, "config", "user.email", "test@example.com")
+	runGitCommand(t, repo, "config", "user.name", "Test User")
+	commitFile := func(name string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(name+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		runGitCommand(t, repo, "add", name)
+		runGitCommand(t, repo, "commit", "-m", name)
+	}
+	commitFile("initial")
+	runGitCommand(t, repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+	runGitCommand(t, repo, "checkout", "-b", "stack/parent")
+	commitFile("parent-feature")
+	runGitCommand(t, repo, "update-ref", "refs/remotes/origin/stack/parent", "HEAD")
+	runGitCommand(t, repo, "checkout", "-b", "stack/child")
+	commitFile("toast-fix")
+	for _, base := range []string{"stack/parent", "origin/stack/parent"} {
+		diff, err := DiffAgainstBase(repo, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(diff, "toast-fix") || strings.Contains(diff, "parent-feature") {
+			t.Fatalf("incorrect stacked diff against %s:\n%s", base, diff)
+		}
+	}
+	for _, base := range []string{"missing-parent", "origin/missing-parent"} {
+		if diff, err := DiffAgainstBase(repo, base); err == nil {
+			t.Fatalf("missing base %s silently fell back to main:\n%s", base, diff)
+		}
+	}
+}
+
 func TestBranchExists(t *testing.T) {
 	t.Parallel()
 
