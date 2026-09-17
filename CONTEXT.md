@@ -3,7 +3,7 @@
 ## Metadata
 - Domain: prmate - personal pull request helper CLI
 - Primary audience: LLM agents working on this codebase, human contributors
-- Last updated: 2026-09-07
+- Last updated: 2026-09-17
 - Status: Active
 - Stability note: Sections marked `[STABLE]` should change rarely. Sections marked `[VOLATILE]` are expected to change often.
 
@@ -31,16 +31,16 @@ This file is the primary working context for the prmate project.
 
 ## 1. Summary [STABLE]
 
-`prmate` is a small Go CLI installed as `pr`. It drafts pull request descriptions and runs AI-assisted pull request reviews.
+`prmate` is a small Go CLI. It drafts pull request descriptions and runs AI-assisted pull request reviews.
 
 - Primary entry point: [main.go](/home/mat/projects/prmate/main.go)
 - CLI framework: `github.com/urfave/cli/v2`
 - Go module: `pr`
 - Go version: `1.25.4`
 - Main commands:
-  - `pr`: smart default. Inspects the current branch; if no open GitHub PR exists, runs describe with `codex`; if an open PR exists, runs review with `codex,claude`. Accepts `--think`.
-  - `pr describe`: generate a PR title/body from a branch diff, then create or update a GitHub PR after user confirmation. Accepts `--think`.
-  - `pr review`: review an existing GitHub PR, with either one reviewer or a default two-reviewer cross-check and synthesis flow. Accepts `--think`.
+  - `prmate`: smart default. Inspects the current branch; if no open GitHub PR exists, runs describe with `codex`; if an open PR exists, runs review with `codex,claude`. Accepts `--think`.
+  - `prmate describe`: generate a PR title/body from a branch diff, then create or update a GitHub PR after user confirmation. Accepts `--think`.
+  - `prmate review`: review an existing GitHub PR, with either one reviewer or a default two-reviewer cross-check and synthesis flow. Accepts `--think`.
 - Supported LLM CLI providers: `claude`, `codex`, `gemini`, `opencode`, each selectable as `<provider>` or `<provider>:<model>`
 - External runtime tools: `git`, `gh`, and at least one supported LLM CLI on `PATH`
 
@@ -53,7 +53,7 @@ There are two sources of instruction for every LLM run, and the split is deliber
 - `pkg/prompts/guidelines/*.md` own **structure and flow only**: what to read and in what order, what is in scope, the steps of each round, and the exact output contract. They carry no opinion about what good code or a good description looks like.
 - `GUIDE.md` at the repository root owns **judgment**: what counts as a finding, what to leave out, what blocks a merge, how a description reads. It is the user's canonical engineering guide, symlinked into each project from a dotfiles repo.
 
-`GUIDE.md` is required. `requireProjectGuide` reads it from the root of the repository the command was invoked in and returns an error when it is missing or empty, so `pr describe` and `pr review` refuse to run rather than silently working to no standard. It is read from the invocation repo, never from a PR worktree: the symlink is gitignored so a worktree copy would be absent, and a checked-in one would let a PR rewrite the standard it is reviewed against.
+`GUIDE.md` is required. `requireProjectGuide` reads it from the root of the repository the command was invoked in and returns an error when it is missing or empty, so `prmate describe` and `prmate review` refuse to run rather than silently working to no standard. It is read from the invocation repo, never from a PR worktree: the symlink is gitignored so a worktree copy would be absent, and a checked-in one would let a PR rewrite the standard it is reviewed against.
 
 When adding guidance, ask which of the two it is. Judgment goes in `GUIDE.md`, not in the embedded prompts.
 
@@ -110,7 +110,7 @@ Highest-risk areas:
 
 Notes:
 - There is no long-running server, database, or background service.
-- The installed command name is `pr`, built from the root package.
+- The installed command name is `prmate`, built from the root package.
 - Prompt guidelines are embedded with `//go:embed`, so changes under `pkg/prompts/guidelines/` are compiled into the binary.
 
 ---
@@ -121,7 +121,7 @@ Notes:
 
 ```mermaid
 flowchart LR
-    USER["User terminal"] --> CLI["pr CLI<br/>urfave/cli"]
+    USER["User terminal"] --> CLI["prmate CLI<br/>urfave/cli"]
     CLI --> SMART["cmd.RunSmart<br/>default action"]
     CLI --> DESCRIBE["cmd.DescribeCommand"]
     CLI --> REVIEW["cmd.ReviewCommand"]
@@ -144,7 +144,7 @@ flowchart LR
     AI --> PROVIDERS["claude / codex / gemini / opencode"]
 ```
 
-### 3.2 Smart default `pr` flow
+### 3.2 Smart default `prmate` flow
 
 ```mermaid
 sequenceDiagram
@@ -154,7 +154,7 @@ sequenceDiagram
     participant D as cmd/describe.go
     participant R as cmd/review.go
 
-    U->>S: pr
+    U->>S: prmate
     S->>G: CurrentBranch()
     S->>G: GetCurrentBranchPullRequest()
     alt no open PR for current branch
@@ -165,13 +165,13 @@ sequenceDiagram
 ```
 
 Key behavior:
-- The root `pr` command is a convenience dispatcher, not a third independent workflow.
+- The root `prmate` command is a convenience dispatcher, not a third independent workflow.
 - It requires a named current branch. Detached HEAD returns an error.
 - PR detection uses `gh pr view` with no PR argument, which lets GitHub CLI resolve the PR for the checked-out branch. This is intended to work for branches created by `gh pr checkout <number>`, including contributor fork PRs.
 - No-open-PR mode passes an empty branch to `runDescribe`, so describe uses the current worktree rather than creating a temporary worktree.
 - Open-PR mode reviews the discovered PR number with `codex,claude`.
 
-### 3.3 `pr describe` flow
+### 3.3 `prmate describe` flow
 
 ```mermaid
 sequenceDiagram
@@ -181,7 +181,7 @@ sequenceDiagram
     participant A as pkg/ai
     participant GH as gh
 
-    U->>D: pr describe [--br branch] [--pr ref] [--llm provider]
+    U->>D: prmate describe [--br branch] [--pr ref] [--llm provider]
     D->>D: Load describe guidelines
     D->>D: Validate --pr when provided
     alt no --br
@@ -218,7 +218,7 @@ Key behavior:
 - The first Markdown H1 becomes the PR title. Remaining Markdown becomes the PR body.
 - Creating or updating a PR is gated by an interactive `ui.Confirm` prompt.
 
-### 3.4 `pr review` flow
+### 3.4 `prmate review` flow
 
 ```mermaid
 sequenceDiagram
@@ -227,7 +227,7 @@ sequenceDiagram
     participant G as pkg/git
     participant A as pkg/ai
 
-    U->>R: pr review --pr ref [--llm providers]
+    U->>R: prmate review --pr ref [--llm providers]
     R->>R: Parse one or two unique providers
     R->>G: GetPullRequest(ref)
     R->>G: Add detached worktree from origin/head or fetched PR head ref
@@ -282,7 +282,7 @@ Provider command expectations:
 - OpenCode: `opencode run --format json <prompt>`, plus `--model <model>` when the spec names one (OpenCode expects `provider/model`).
 
 Thinking/reasoning effort mapping (validated per provider, independent of the model override):
-- User-facing flag: `--think <level>` (alias `--thinking`) on root `pr`, `pr describe`, and `pr review`. Default is `high`.
+- User-facing flag: `--think <level>` (alias `--thinking`) on root `prmate`, `prmate describe`, and `prmate review`. Default is `high`.
 - Codex: reasoning effort is passed as `-c model_reasoning_effort="<level>"`; accepted levels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
 - Claude: reasoning effort is passed as `--effort <level>`; accepted levels are `low`, `medium`, `high`, `xhigh`, `max`.
 - OpenCode: passed through as `--variant <level>` because OpenCode variants are provider/model-specific and may be custom.
@@ -314,14 +314,14 @@ Supported schema:
 }
 ```
 
-`github_reviewers` is only used by `pr describe` when creating a new PR. The config directory is created with `0755`, and the file is written with `0600`.
+`github_reviewers` is only used by `prmate describe` when creating a new PR. The config directory is created with `0755`, and the file is written with `0600`.
 
 ### 4.2 Temporary context files
 
 The CLI writes temporary Markdown context files for LLMs:
 
-- `.pr-diff-context.md` for `pr describe`
-- `.pr-context.md` for `pr review`
+- `.pr-diff-context.md` for `prmate describe`
+- `.pr-context.md` for `prmate review`
 
 These files contain root project context, code diffs, and PR metadata. They must be treated as transient and sensitive.
 
@@ -338,10 +338,10 @@ This tool passes PR title, PR body, local diff content, and selected worktree fi
 
 ## 5. Critical Invariants [STABLE]
 
-- Keep the installed binary command name as `pr` unless install docs and setup behavior are updated together.
-- Keep root `pr` behavior aligned with `README.md`: no open PR means describe with `codex`; open PR means review with `codex,claude`.
+- Keep the installed binary command name as `prmate` unless install docs and setup behavior are updated together.
+- Keep root `prmate` behavior aligned with `README.md`: no open PR means describe with `codex`; open PR means review with `codex,claude`.
 - `cmd/` should own top-level user workflows and orchestration. Keep external command execution details in `pkg/git` or `pkg/ai`.
-- `pr describe` and `pr review` should continue running LLMs in `ai.ReadOnly` mode unless a command is explicitly designed to modify code.
+- `prmate describe` and `prmate review` should continue running LLMs in `ai.ReadOnly` mode unless a command is explicitly designed to modify code.
 - Do not skip the interactive confirmation before creating or updating a PR.
 - Preserve worktree cleanup paths. Any new early return after worktree creation must still cleanup through `defer`.
 - Preserve `0600` permissions for context/config files containing PR or diff content.
@@ -426,7 +426,7 @@ go test ./...
 Build manually:
 
 ```bash
-go build -o pr .
+go build -o prmate .
 ```
 
 Format Go code before handoff:
@@ -439,7 +439,7 @@ Setup behavior:
 - `setup.sh` requires `git`.
 - If `go` is missing, it installs Go `1.25.4` under `~/.local/go`.
 - If `gh` is missing, it installs GitHub CLI `2.88.1` into `INSTALL_DIR`, defaulting to `~/.local/bin`.
-- It builds the root package and installs `pr` into `INSTALL_DIR`.
+- It builds the root package and installs `prmate` into `INSTALL_DIR`.
 - It warns if `gh` is not authenticated or `INSTALL_DIR` is not on `PATH`.
 
 ---
@@ -448,10 +448,10 @@ Setup behavior:
 
 - Provider CLIs are external and their JSON/JSONL output formats may change. `pkg/ai` is the compatibility boundary.
 - Provider thinking flags are not uniform: Codex and Claude leave model selection to their CLI defaults, Codex uses a config override for effort, Claude uses `--effort`, OpenCode uses variants, and Gemini currently has no supported mapping. The CLI defaults to `high` for supported providers and ignores that implicit default for Gemini.
-- `pr describe` without `--pr` still uses `origin/main`; it does not infer a stacked parent or the repository default branch.
+- `prmate describe` without `--pr` still uses `origin/main`; it does not infer a stacked parent or the repository default branch.
 - `git.FetchOrigin` calls are best effort in some worktree creation paths. This is intentional for local-only branches, but it means stale remotes can affect generated diffs.
 - `BranchExists` runs git in the current process directory rather than accepting an explicit repo path.
-- Every `pr describe` and `pr review` run now requires `GUIDE.md` at the invocation repository root. A project without the symlink cannot use the tool until one is added.
+- Every `prmate describe` and `prmate review` run now requires `GUIDE.md` at the invocation repository root. A project without the symlink cannot use the tool until one is added.
 - `Write` mode exists in `pkg/ai`, but user-facing workflows currently use read-only LLM runs.
 - Tests do not cover live `gh pr create/edit/view`, authenticated GitHub behavior, or real LLM CLI execution.
 
@@ -466,8 +466,8 @@ Setup behavior:
 ## 10. Future Work [VOLATILE]
 
 Potential improvements worth considering:
-- Support repository default base branch detection instead of hardcoded `origin/main` in `pr describe` without `--pr`.
-- Consider a `pr doctor` check that reports a missing `GUIDE.md` before a run rather than at run time.
+- Support repository default base branch detection instead of hardcoded `origin/main` in `prmate describe` without `--pr`.
+- Consider a `prmate doctor` check that reports a missing `GUIDE.md` before a run rather than at run time.
 - Add explicit tests for OpenCode parsing and verbose streaming edge cases.
 - Add a non-interactive or dry-run mode if automation use cases become important.
 - Add integration smoke tests behind opt-in environment flags for `gh` and provider CLIs.

@@ -43,7 +43,7 @@ func requireProjectGuide() (projectGuide, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return projectGuide{}, fmt.Errorf("no %s at repository root %s; symlink the canonical guide there before running pr", projectGuideFilename, root)
+			return projectGuide{}, fmt.Errorf("no %s at repository root %s; symlink the canonical guide there before running prmate", projectGuideFilename, root)
 		}
 		return projectGuide{}, fmt.Errorf("read %s: %w", path, err)
 	}

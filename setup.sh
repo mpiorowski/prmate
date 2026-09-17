@@ -126,9 +126,9 @@ if ! command -v gh >/dev/null 2>&1; then
     install_gh
 fi
 
-echo "Building pr CLI..."
+echo "Building prmate CLI..."
 cd "$SCRIPT_DIR"
-PR_BINARY="$(binary_name pr)"
+PR_BINARY="$(binary_name prmate)"
 go build -o "$PR_BINARY" .
 
 echo "Installing to ${INSTALL_DIR}/${PR_BINARY}..."
