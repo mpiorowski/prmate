@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ type ReviewReport struct {
 // verdict: the architecture track never gates a merge, so the shape cannot
 // express one.
 type ArchFinding struct {
+	Cost         string `json:"cost"`
 	Location     string `json:"location"`
 	DivergesFrom string `json:"diverges_from"`
 	Description  string `json:"description"`
@@ -329,7 +331,7 @@ func formatArchMarkdownReport(report *ArchReport) string {
 	if len(report.Findings) > 0 {
 		sb.WriteString("### Findings\n\n")
 		for _, finding := range report.Findings {
-			sb.WriteString(fmt.Sprintf("- **`%s`** diverges from `%s`\n", finding.Location, finding.DivergesFrom))
+			sb.WriteString(fmt.Sprintf("- **[%s] `%s`** diverges from `%s`\n", strings.ToUpper(finding.Cost), finding.Location, finding.DivergesFrom))
 			sb.WriteString(fmt.Sprintf("  - %s\n", finding.Description))
 			if finding.Suggestion != "" {
 				sb.WriteString(fmt.Sprintf("  - *Suggestion:* %s\n", finding.Suggestion))
@@ -460,12 +462,24 @@ func parseReviewReport(response ai.Response) (*ReviewReport, error) {
 	return &report, nil
 }
 
+// archCostRank orders findings in the rendered report, highest cost first.
+// It is also the closed set a finding's cost must come from.
+var archCostRank = map[string]int{"high": 0, "medium": 1, "low": 2}
+
 func parseArchReport(response ai.Response) (*ArchReport, error) {
 	jsonStr := extractJSON(response.FinalMessage)
 	var report ArchReport
 	if err := json.Unmarshal([]byte(jsonStr), &report); err != nil {
 		return nil, fmt.Errorf("parse architecture review JSON: %w", err)
 	}
+	for _, finding := range report.Findings {
+		if _, ok := archCostRank[finding.Cost]; !ok {
+			return nil, fmt.Errorf("architecture finding at %q has unknown cost %q", finding.Location, finding.Cost)
+		}
+	}
+	sort.SliceStable(report.Findings, func(i, j int) bool {
+		return archCostRank[report.Findings[i].Cost] < archCostRank[report.Findings[j].Cost]
+	})
 	return &report, nil
 }
 

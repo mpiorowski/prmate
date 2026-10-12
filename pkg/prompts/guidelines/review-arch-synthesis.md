@@ -17,6 +17,8 @@ cross-checks.
 3. Merge overlapping findings into one.
 4. Where the reviewers disagree, settle it against the worktree and say which
    way you went in the finding description.
+5. Set each finding's cost from the final finding, not from the inputs, and
+   list findings highest cost first.
 
 The result is one self-contained report. Every finding must be actionable
 without reading the intermediate reviews, and nothing may reference them.
@@ -31,6 +33,7 @@ Return JSON only. Do not wrap it in prose unless you must place it in a fenced
   "summary": "short review summary noting this was cross-checked by two reviewers",
   "findings": [
     {
+      "cost": "high | medium | low",
       "location": "path/to/file:line",
       "diverges_from": "path/to/reference/file, or the sites a duplication now spans",
       "description": "what drifts and what it costs over time",
@@ -45,7 +48,8 @@ Return JSON only. Do not wrap it in prose unless you must place it in a fenced
 
 ## Field rules
 
-- There is no verdict and no severity. Every finding is a comment.
+- There is no verdict. Every finding is a comment.
+- `cost` accepts only the values listed above. The project guide defines them.
 - `location` is `path/to/file:line`.
 - `diverges_from` is required. It names a real path in the worktree, or lists
   real sites. A finding you cannot anchor this way is not reported.

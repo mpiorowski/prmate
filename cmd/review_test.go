@@ -284,7 +284,7 @@ func TestLoadTrackGuidelinesForEveryTrack(t *testing.T) {
 func TestRenderArchitectureReportHasNoVerdict(t *testing.T) {
 	t.Parallel()
 
-	response := ai.Response{FinalMessage: "```json\n{\n  \"summary\": \"fits well\",\n  \"findings\": [\n    {\n      \"location\": \"app/billing/svc.rs:12\",\n      \"diverges_from\": \"app/orders/svc.rs\",\n      \"description\": \"logs inside the pure module\",\n      \"suggestion\": \"move the tracing call to the job entry point\"\n    }\n  ],\n  \"positives\": [\"follows the domain layout\"]\n}\n```"}
+	response := ai.Response{FinalMessage: "```json\n{\n  \"summary\": \"fits well\",\n  \"findings\": [\n    {\n      \"cost\": \"low\",\n      \"location\": \"app/billing/ui.rs:40\",\n      \"diverges_from\": \"app/orders/ui.rs\",\n      \"description\": \"naming drifts from the sibling\",\n      \"suggestion\": \"rename to match\"\n    },\n    {\n      \"cost\": \"high\",\n      \"location\": \"app/billing/svc.rs:12\",\n      \"diverges_from\": \"app/orders/svc.rs\",\n      \"description\": \"logs inside the pure module\",\n      \"suggestion\": \"move the tracing call to the job entry point\"\n    }\n  ],\n  \"positives\": [\"follows the domain layout\"]\n}\n```"}
 
 	got, err := renderTrackReport(trackArchitecture, response)
 	if err != nil {
@@ -293,8 +293,9 @@ func TestRenderArchitectureReportHasNoVerdict(t *testing.T) {
 	for _, want := range []string{
 		"## Architecture Review Summary",
 		"fits well",
-		"`app/billing/svc.rs:12`",
+		"[HIGH] `app/billing/svc.rs:12`",
 		"diverges from `app/orders/svc.rs`",
+		"[LOW] `app/billing/ui.rs:40`",
 		"logs inside the pure module",
 		"*Suggestion:* move the tracing call",
 		"follows the domain layout",
@@ -305,6 +306,22 @@ func TestRenderArchitectureReportHasNoVerdict(t *testing.T) {
 	}
 	if strings.Contains(got, "Verdict") {
 		t.Fatalf("architecture report must not carry a verdict:\n%s", got)
+	}
+	if strings.Index(got, "[HIGH]") > strings.Index(got, "[LOW]") {
+		t.Fatalf("architecture findings must render highest cost first:\n%s", got)
+	}
+}
+
+func TestParseArchReportRejectsUnknownCost(t *testing.T) {
+	t.Parallel()
+
+	response := ai.Response{FinalMessage: `{"summary":"x","findings":[{"cost":"critical","location":"a.go:1","diverges_from":"b.go","description":"d","suggestion":"s"}],"positives":[]}`}
+	_, err := parseArchReport(response)
+	if err == nil {
+		t.Fatal("expected unknown cost to be rejected")
+	}
+	if !strings.Contains(err.Error(), "unknown cost") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

@@ -228,7 +228,7 @@ Key behavior:
 - `addWorktreeFromPullRequestHead` first tries `origin/<headRefName>`, then falls back to fetching `pull/<number>/head` into `refs/pr-tool/pr/<number>`.
 - `.pr-context.md` contains the project guide, project context, PR metadata, title, body, and local diff against the PR base branch. Review prompts instruct the LLM to read the guide first, then follow relevant domain-context pointers before reviewing, cross-checking, or synthesizing.
 - For PR review, project context is read from `CONTEXT.md` on the PR base ref when possible (`origin/<base>` then `<base>`), then falls back to the checked-out worktree. This avoids treating contributor changes to root context as authoritative reviewer instructions.
-- Bug track output must parse to `ReviewReport` JSON, which carries a verdict and severities. Architecture track output must parse to `ArchReport` JSON, which has neither: each finding carries `location`, `diverges_from`, `description`, `suggestion`. The CLI tolerates fenced JSON and extracts a balanced top-level object when possible. Round 1 responses are parsed before the cross-check so a malformed review fails early.
+- Bug track output must parse to `ReviewReport` JSON, which carries a verdict and severities. Architecture track output must parse to `ArchReport` JSON, which has no verdict: each finding carries `cost` (`high`, `medium`, `low`, a closed set rejected on parse), `location`, `diverges_from`, `description`, `suggestion`. Findings render highest cost first. The CLI tolerates fenced JSON and extracts a balanced top-level object when possible. Round 1 responses are parsed before the cross-check so a malformed review fails early.
 
 ### 3.4 LLM provider adapter contracts
 
@@ -319,7 +319,7 @@ This tool passes PR title, PR body, local diff content, and selected worktree fi
 - `GUIDE.md` stays required and stays read from the invocation repository root. Do not add a silent fallback, a default guide, or a worktree read path; a run with no guide must fail loudly.
 - Embedded prompt guidelines stay structure and flow only. Any rule about what makes a finding or a description good belongs in `GUIDE.md`.
 - `ReviewReport` and `ArchReport` JSON shapes are public internal contracts between prompts and parser. Update prompt guidelines, parser, tests, and Markdown rendering together.
-- `ArchReport` has no verdict and no severity field. The architecture track never gates a merge, and the shape must stay unable to express one.
+- `ArchReport` has no verdict field. The architecture track never gates a merge, and the shape must stay unable to express one. `cost` ranks findings for the reader; it is not a gate.
 - Keep prompt guidelines embedded through `pkg/prompts`; do not replace them with runtime file reads unless install and packaging behavior are redesigned.
 - Do not broaden LLM provider names in command parsing without adding provider adapter behavior and tests. Provider names stay a closed set in `ai.ParseSpec`; model names stay pass-through.
 - Anything that names a reviewer to the user or to another LLM uses `Spec.String()`, never `Spec.Provider`. Two reviewers on one provider are only distinguishable by the full spec.

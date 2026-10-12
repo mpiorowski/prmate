@@ -14,7 +14,7 @@ independent architecture review of the same pull request.
 
 1. For each peer finding, open the path or sites named in `diverges_from` and
    confirm the divergence is real in the worktree.
-2. Name the findings to drop, merge, or rewrite.
+2. Name the findings to drop, re-cost, merge, or rewrite.
 3. Compare both reviews and call out anything real that neither caught.
 
 ## Scope
@@ -34,11 +34,11 @@ Return Markdown with these sections and nothing else:
 - Findings from either review that survive, each with its confirmed reference.
 
 ## False Positives or Changes
-- Findings to drop, merge, or rewrite, with a brief reason.
+- Findings to drop, re-cost, merge, or rewrite, with a brief reason.
 
 ## Missed Findings
-- Real divergence neither review captured. Include location, reference, cost
-  over time, and fix direction.
+- Real divergence neither review captured. Include cost, location, reference,
+  and fix direction.
 ```
 
 Do not restate either review verbatim. If both reviews are solid and complete,
