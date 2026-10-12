@@ -198,9 +198,9 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 	t.Parallel()
 
 	pr := git.PullRequest{Number: 99}
-	initialReviews := []reviewRunResult{
-		{spec: ai.Spec{Provider: "claude"}, response: ai.Response{FinalMessage: "claude review"}},
-		{spec: ai.Spec{Provider: "codex"}, response: ai.Response{FinalMessage: "codex review"}},
+	initialReviews := []textRunResult{
+		{spec: ai.Spec{Provider: "claude"}, output: "claude review"},
+		{spec: ai.Spec{Provider: "codex"}, output: "codex review"},
 	}
 	crossChecks := []textRunResult{
 		{spec: ai.Spec{Provider: "claude"}, output: "claude checked codex"},
@@ -231,9 +231,9 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 func TestBuildSynthesisPromptLabelsTwoModelsOfOneProvider(t *testing.T) {
 	t.Parallel()
 
-	initialReviews := []reviewRunResult{
-		{spec: ai.Spec{Provider: "claude", Model: "opus"}, response: ai.Response{FinalMessage: "opus review"}},
-		{spec: ai.Spec{Provider: "claude", Model: "sonnet"}, response: ai.Response{FinalMessage: "sonnet review"}},
+	initialReviews := []textRunResult{
+		{spec: ai.Spec{Provider: "claude", Model: "opus"}, output: "opus review"},
+		{spec: ai.Spec{Provider: "claude", Model: "sonnet"}, output: "sonnet review"},
 	}
 	crossChecks := []textRunResult{
 		{spec: ai.Spec{Provider: "claude", Model: "opus"}, output: "opus checked sonnet"},
@@ -251,5 +251,70 @@ func TestBuildSynthesisPromptLabelsTwoModelsOfOneProvider(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("synthesis prompt missing %q", want)
 		}
+	}
+}
+
+func TestTracksForReview(t *testing.T) {
+	t.Parallel()
+
+	both := tracksForReview(false)
+	if len(both) != 2 || both[0] != trackBugs || both[1] != trackArchitecture {
+		t.Fatalf("default should run bugs then architecture, got %v", both)
+	}
+	bugsOnly := tracksForReview(true)
+	if len(bugsOnly) != 1 || bugsOnly[0] != trackBugs {
+		t.Fatalf("--no-arch should run bugs only, got %v", bugsOnly)
+	}
+}
+
+func TestLoadTrackGuidelinesForEveryTrack(t *testing.T) {
+	t.Parallel()
+
+	for _, track := range []reviewTrack{trackBugs, trackArchitecture} {
+		loaded, err := loadTrackGuidelines(track)
+		if err != nil {
+			t.Fatalf("%s guidelines failed to load: %v", track.label(), err)
+		}
+		if loaded.review == "" || loaded.crossCheck == "" || loaded.synthesis == "" {
+			t.Fatalf("%s guidelines incomplete: %+v", track.label(), loaded)
+		}
+	}
+}
+
+func TestRenderArchitectureReportHasNoVerdict(t *testing.T) {
+	t.Parallel()
+
+	response := ai.Response{FinalMessage: "```json\n{\n  \"summary\": \"fits well\",\n  \"findings\": [\n    {\n      \"location\": \"app/billing/svc.rs:12\",\n      \"diverges_from\": \"app/orders/svc.rs\",\n      \"description\": \"logs inside the pure module\",\n      \"suggestion\": \"move the tracing call to the job entry point\"\n    }\n  ],\n  \"positives\": [\"follows the domain layout\"]\n}\n```"}
+
+	got, err := renderTrackReport(trackArchitecture, response)
+	if err != nil {
+		t.Fatalf("renderTrackReport returned error: %v", err)
+	}
+	for _, want := range []string{
+		"## Architecture Review Summary",
+		"fits well",
+		"`app/billing/svc.rs:12`",
+		"diverges from `app/orders/svc.rs`",
+		"logs inside the pure module",
+		"*Suggestion:* move the tracing call",
+		"follows the domain layout",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("architecture report missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Verdict") {
+		t.Fatalf("architecture report must not carry a verdict:\n%s", got)
+	}
+}
+
+func TestCheckTrackReportRejectsMalformedReview(t *testing.T) {
+	t.Parallel()
+
+	if err := checkTrackReport(trackBugs, ai.Response{FinalMessage: "not json"}); err == nil {
+		t.Fatal("expected bug review parse error")
+	}
+	if err := checkTrackReport(trackArchitecture, ai.Response{FinalMessage: "not json"}); err == nil {
+		t.Fatal("expected architecture review parse error")
 	}
 }

@@ -13,11 +13,15 @@ const (
 	smartReviewLLMs  = "codex,claude"
 )
 
+// smartReviewTracks runs both passes: the smart command has no flag to skip
+// the architecture track, so the full review is the only shape it produces.
+var smartReviewTracks = []reviewTrack{trackBugs, trackArchitecture}
+
 type smartOps struct {
 	currentBranch      func() (string, error)
 	currentPullRequest func() (git.PullRequest, bool, error)
 	describe           func(branch string, prRef string, llm string, thinking string, thinkingExplicit bool) error
-	review             func(prRef string, llms string, thinking string, thinkingExplicit bool) error
+	review             func(prRef string, llms string, tracks []reviewTrack, thinking string, thinkingExplicit bool) error
 }
 
 func RunSmart(thinking string, thinkingExplicit bool) error {
@@ -52,5 +56,5 @@ func runSmartWithOps(thinking string, thinkingExplicit bool, ops smartOps) error
 
 	prRef := strconv.Itoa(pr.Number)
 	ui.Step("Found open pull request %s; reviewing with %s", ui.Emphasize("#"+prRef), ui.Emphasize(smartReviewLLMs))
-	return ops.review(prRef, smartReviewLLMs, thinking, thinkingExplicit)
+	return ops.review(prRef, smartReviewLLMs, smartReviewTracks, thinking, thinkingExplicit)
 }

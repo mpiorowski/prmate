@@ -31,6 +31,102 @@ type ReviewReport struct {
 	Positives []string      `json:"positives"`
 }
 
+// ArchFinding is one architecture comment. It carries no severity and no
+// verdict: the architecture track never gates a merge, so the shape cannot
+// express one.
+type ArchFinding struct {
+	Location     string `json:"location"`
+	DivergesFrom string `json:"diverges_from"`
+	Description  string `json:"description"`
+	Suggestion   string `json:"suggestion"`
+}
+
+type ArchReport struct {
+	Summary   string        `json:"summary"`
+	Findings  []ArchFinding `json:"findings"`
+	Positives []string      `json:"positives"`
+}
+
+// reviewTrack is one independent pass over the PR. Each track has its own
+// guidelines, its own report shape, and its own cross-check and synthesis;
+// the tracks only meet when the reports are printed.
+type reviewTrack int
+
+const (
+	trackBugs reviewTrack = iota
+	trackArchitecture
+)
+
+func (t reviewTrack) label() string {
+	switch t {
+	case trackBugs:
+		return "bugs"
+	case trackArchitecture:
+		return "arch"
+	}
+	panic(fmt.Sprintf("unknown review track %d", t))
+}
+
+type trackGuidelines struct {
+	review     string
+	crossCheck string
+	synthesis  string
+}
+
+func loadTrackGuidelines(t reviewTrack) (trackGuidelines, error) {
+	var names [3]string
+	switch t {
+	case trackBugs:
+		names = [3]string{"review", "review-cross-check", "review-synthesis"}
+	case trackArchitecture:
+		names = [3]string{"review-arch", "review-arch-cross-check", "review-arch-synthesis"}
+	default:
+		panic(fmt.Sprintf("unknown review track %d", t))
+	}
+
+	var loaded [3]string
+	for i, name := range names {
+		content, err := prompts.Load(name)
+		if err != nil {
+			return trackGuidelines{}, fmt.Errorf("failed to load %s guidelines: %w", t.label(), err)
+		}
+		loaded[i] = content
+	}
+	return trackGuidelines{review: loaded[0], crossCheck: loaded[1], synthesis: loaded[2]}, nil
+}
+
+// checkTrackReport confirms a round-1 response parses to the track's report
+// shape, so a malformed review fails before it is fed to the cross-check.
+func checkTrackReport(t reviewTrack, response ai.Response) error {
+	switch t {
+	case trackBugs:
+		_, err := parseReviewReport(response)
+		return err
+	case trackArchitecture:
+		_, err := parseArchReport(response)
+		return err
+	}
+	panic(fmt.Sprintf("unknown review track %d", t))
+}
+
+func renderTrackReport(t reviewTrack, response ai.Response) (string, error) {
+	switch t {
+	case trackBugs:
+		report, err := parseReviewReport(response)
+		if err != nil {
+			return "", err
+		}
+		return formatMarkdownReport(report), nil
+	case trackArchitecture:
+		report, err := parseArchReport(response)
+		if err != nil {
+			return "", err
+		}
+		return formatArchMarkdownReport(report), nil
+	}
+	panic(fmt.Sprintf("unknown review track %d", t))
+}
+
 type reviewRunResult struct {
 	spec     ai.Spec
 	report   *ReviewReport
@@ -40,6 +136,7 @@ type reviewRunResult struct {
 
 type promptRun struct {
 	spec   ai.Spec
+	track  reviewTrack
 	prompt string
 }
 
@@ -68,20 +165,27 @@ func ReviewCommand() *cli.Command {
 				Value:   "codex,claude",
 				Aliases: []string{"l"},
 			},
+			&cli.BoolFlag{
+				Name:  "no-arch",
+				Usage: "Skip the architecture track and run the bug review only. Only applies with two reviewers",
+			},
 			ThinkingFlag(),
 		},
 		Action: func(c *cli.Context) error {
 			thinking, thinkingExplicit := ThinkingFromContext(c)
-			return runReviewWithThinking(c.String("pr"), c.String("llm"), thinking, thinkingExplicit)
+			return runReviewWithThinking(c.String("pr"), c.String("llm"), tracksForReview(c.Bool("no-arch")), thinking, thinkingExplicit)
 		},
 	}
 }
 
-func runReview(prValue string, llmValue string) error {
-	return runReviewWithThinking(prValue, llmValue, defaultThinkingLevel, false)
+func tracksForReview(noArch bool) []reviewTrack {
+	if noArch {
+		return []reviewTrack{trackBugs}
+	}
+	return []reviewTrack{trackBugs, trackArchitecture}
 }
 
-func runReviewWithThinking(prValue string, llmValue string, thinking string, thinkingExplicit bool) error {
+func runReviewWithThinking(prValue string, llmValue string, tracks []reviewTrack, thinking string, thinkingExplicit bool) error {
 	specs, err := parseLLMSpecs(llmValue)
 	if err != nil {
 		return err
@@ -127,9 +231,12 @@ func runReviewWithThinking(prValue string, llmValue string, thinking string, thi
 	}
 
 	if len(specs) == 1 {
+		if len(tracks) > 1 {
+			ui.Note("Architecture track needs two reviewers to cross-check; running the bug review only")
+		}
 		return runSingleReview(specs[0], tempDir, pr, contextPath, thinking, thinkingExplicit)
 	}
-	return runPairedReview(specs, tempDir, pr, contextPath, thinking, thinkingExplicit)
+	return runPairedReview(specs, tempDir, pr, contextPath, tracks, thinking, thinkingExplicit)
 }
 
 func extractJSON(input string) string {
@@ -215,6 +322,32 @@ func formatMarkdownReport(report *ReviewReport) string {
 	return sb.String()
 }
 
+func formatArchMarkdownReport(report *ArchReport) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## Architecture Review Summary\n\n**Summary:** %s\n\n", report.Summary))
+
+	if len(report.Findings) > 0 {
+		sb.WriteString("### Findings\n\n")
+		for _, finding := range report.Findings {
+			sb.WriteString(fmt.Sprintf("- **`%s`** diverges from `%s`\n", finding.Location, finding.DivergesFrom))
+			sb.WriteString(fmt.Sprintf("  - %s\n", finding.Description))
+			if finding.Suggestion != "" {
+				sb.WriteString(fmt.Sprintf("  - *Suggestion:* %s\n", finding.Suggestion))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(report.Positives) > 0 {
+		sb.WriteString("### Positives\n\n")
+		for _, positive := range report.Positives {
+			sb.WriteString(fmt.Sprintf("- %s\n", positive))
+		}
+	}
+
+	return sb.String()
+}
+
 func buildReviewPrompt(pr git.PullRequest, contextPath string, guidelines string) string {
 	return fmt.Sprintf(`Review pull request #%d.
 
@@ -251,7 +384,7 @@ Follow these cross-check guidelines:
 %s`, pr.Number, contextPath, reviewer, reviewer, ownReview, peer, peer, peerReview, guidelines)
 }
 
-func buildSynthesisPrompt(pr git.PullRequest, contextPath string, initialReviews []reviewRunResult, crossChecks []textRunResult, guidelines string) string {
+func buildSynthesisPrompt(pr git.PullRequest, contextPath string, initialReviews []textRunResult, crossChecks []textRunResult, guidelines string) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf(`Merge the reviewed findings for pull request #%d.
 
@@ -264,7 +397,7 @@ The reviewers first produced independent reviews, then each reviewer cross-check
 `, pr.Number, contextPath))
 
 	for _, result := range initialReviews {
-		sb.WriteString(fmt.Sprintf("<initial_review provider=\"%s\">\n%s\n</initial_review>\n\n", result.spec.String(), result.response.FinalMessage))
+		sb.WriteString(fmt.Sprintf("<initial_review provider=\"%s\">\n%s\n</initial_review>\n\n", result.spec.String(), result.output))
 	}
 
 	for _, result := range crossChecks {
@@ -327,6 +460,15 @@ func parseReviewReport(response ai.Response) (*ReviewReport, error) {
 	return &report, nil
 }
 
+func parseArchReport(response ai.Response) (*ArchReport, error) {
+	jsonStr := extractJSON(response.FinalMessage)
+	var report ArchReport
+	if err := json.Unmarshal([]byte(jsonStr), &report); err != nil {
+		return nil, fmt.Errorf("parse architecture review JSON: %w", err)
+	}
+	return &report, nil
+}
+
 func runSingleReview(spec ai.Spec, tempDir string, pr git.PullRequest, contextPath string, thinking string, thinkingExplicit bool) error {
 	guidelines, err := prompts.Load("review")
 	if err != nil {
@@ -347,88 +489,102 @@ func runSingleReview(spec ai.Spec, tempDir string, pr git.PullRequest, contextPa
 	return nil
 }
 
-func runPairedReview(specs []ai.Spec, tempDir string, pr git.PullRequest, contextPath string, thinking string, thinkingExplicit bool) error {
-	reviewGuidelines, err := prompts.Load("review")
-	if err != nil {
-		return fmt.Errorf("failed to load review guidelines: %w", err)
-	}
-	crossCheckGuidelines, err := prompts.Load("review-cross-check")
-	if err != nil {
-		return fmt.Errorf("failed to load cross-check guidelines: %w", err)
-	}
-	synthesisGuidelines, err := prompts.Load("review-synthesis")
-	if err != nil {
-		return fmt.Errorf("failed to load synthesis guidelines: %w", err)
+func runPairedReview(specs []ai.Spec, tempDir string, pr git.PullRequest, contextPath string, tracks []reviewTrack, thinking string, thinkingExplicit bool) error {
+	guidelines := map[reviewTrack]trackGuidelines{}
+	for _, track := range tracks {
+		loaded, err := loadTrackGuidelines(track)
+		if err != nil {
+			return err
+		}
+		guidelines[track] = loaded
 	}
 
-	ui.Step("Round 1/3: running independent reviews with %s and %s", ui.Emphasize(specs[0].String()), ui.Emphasize(specs[1].String()))
-	initialPrompt := buildReviewPrompt(pr, contextPath, reviewGuidelines)
-	initialReviews := runReviews(specs, tempDir, initialPrompt, false, thinking, thinkingExplicit)
-	for _, result := range initialReviews {
-		if result.err != nil {
-			return reportReviewFailure(result)
+	ui.Step("Round 1/3: running independent %s reviews with %s and %s", ui.Emphasize(trackLabels(tracks)), ui.Emphasize(specs[0].String()), ui.Emphasize(specs[1].String()))
+	var prompts []promptRun
+	for _, track := range tracks {
+		prompt := buildReviewPrompt(pr, contextPath, guidelines[track].review)
+		for _, spec := range specs {
+			prompts = append(prompts, promptRun{spec: spec, track: track, prompt: prompt})
 		}
+	}
+	initialReviews := map[reviewTrack][]textRunResult{}
+	for i, result := range runTextPrompts(tempDir, "review", prompts, false, thinking, thinkingExplicit) {
+		track := prompts[i].track
+		if result.err != nil {
+			return reportTextFailure(track.label()+" review", result)
+		}
+		if err := checkTrackReport(track, result.response); err != nil {
+			return reportTextFailure(track.label()+" review", textRunResult{spec: result.spec, err: err, response: result.response})
+		}
+		initialReviews[track] = append(initialReviews[track], result)
 	}
 
 	ui.Step("Round 2/3: cross-checking findings both ways")
-	crossCheckPrompts := []promptRun{
-		{
-			spec: specs[0],
-			prompt: buildCrossCheckPrompt(
-				pr,
-				contextPath,
-				specs[0].String(),
-				initialReviews[0].response.FinalMessage,
-				specs[1].String(),
-				initialReviews[1].response.FinalMessage,
-				crossCheckGuidelines,
-			),
-		},
-		{
-			spec: specs[1],
-			prompt: buildCrossCheckPrompt(
-				pr,
-				contextPath,
-				specs[1].String(),
-				initialReviews[1].response.FinalMessage,
-				specs[0].String(),
-				initialReviews[0].response.FinalMessage,
-				crossCheckGuidelines,
-			),
-		},
-	}
-	crossChecks := runTextPrompts(tempDir, "cross-check", crossCheckPrompts, false, thinking, thinkingExplicit)
-	for _, result := range crossChecks {
-		if result.err != nil {
-			return reportTextFailure("cross-check", result)
+	prompts = nil
+	for _, track := range tracks {
+		reviews := initialReviews[track]
+		for i := range specs {
+			own := reviews[i]
+			peer := reviews[1-i]
+			prompts = append(prompts, promptRun{
+				spec:   own.spec,
+				track:  track,
+				prompt: buildCrossCheckPrompt(pr, contextPath, own.spec.String(), own.output, peer.spec.String(), peer.output, guidelines[track].crossCheck),
+			})
 		}
+	}
+	crossChecks := map[reviewTrack][]textRunResult{}
+	for i, result := range runTextPrompts(tempDir, "cross-check", prompts, false, thinking, thinkingExplicit) {
+		track := prompts[i].track
+		if result.err != nil {
+			return reportTextFailure(track.label()+" cross-check", result)
+		}
+		crossChecks[track] = append(crossChecks[track], result)
 	}
 
 	ui.Step("Round 3/3: merging validated findings with %s", ui.Emphasize(specs[0].String()))
-	synthesisPrompt := buildSynthesisPrompt(pr, contextPath, initialReviews, crossChecks, synthesisGuidelines)
-	response, err := ai.RunWithOptions(tempDir, synthesisPrompt, specs[0], ai.ReadOnly, ai.RunOptions{ShowProgress: true, Verbose: false, Thinking: thinking, ThinkingExplicit: thinkingExplicit})
-	if err != nil {
-		return fmt.Errorf("synthesis failed: %w", err)
+	prompts = nil
+	for _, track := range tracks {
+		prompts = append(prompts, promptRun{
+			spec:   specs[0],
+			track:  track,
+			prompt: buildSynthesisPrompt(pr, contextPath, initialReviews[track], crossChecks[track], guidelines[track].synthesis),
+		})
 	}
-
-	report, err := parseReviewReport(response)
-	if err != nil {
-		if strings.TrimSpace(response.FinalMessage) != "" {
-			ui.Note("%s final message:\n%s", specs[0].String(), response.FinalMessage)
+	var rendered []string
+	for i, result := range runTextPrompts(tempDir, "synthesis", prompts, false, thinking, thinkingExplicit) {
+		track := prompts[i].track
+		if result.err != nil {
+			return reportTextFailure(track.label()+" synthesis", result)
 		}
-		return fmt.Errorf("failed to parse synthesized review: %w", err)
+		markdown, err := renderTrackReport(track, result.response)
+		if err != nil {
+			if strings.TrimSpace(result.output) != "" {
+				ui.Note("%s final message:\n%s", result.spec.String(), result.output)
+			}
+			return fmt.Errorf("failed to parse synthesized %s review: %w", track.label(), err)
+		}
+		rendered = append(rendered, markdown)
 	}
 
-	fmt.Printf("\n%s\n", formatMarkdownReport(report))
+	fmt.Printf("\n%s\n", strings.Join(rendered, "\n"))
 	ui.Success("Paired review finished")
 	return nil
+}
+
+func trackLabels(tracks []reviewTrack) string {
+	labels := make([]string, len(tracks))
+	for i, track := range tracks {
+		labels[i] = track.label()
+	}
+	return strings.Join(labels, "+")
 }
 
 func runReviews(specs []ai.Spec, tempDir string, prompt string, verbose bool, thinking string, thinkingExplicit bool) []reviewRunResult {
 	results := make([]reviewRunResult, len(specs))
 	prompts := make([]promptRun, len(specs))
 	for i, spec := range specs {
-		prompts[i] = promptRun{spec: spec, prompt: prompt}
+		prompts[i] = promptRun{spec: spec, track: trackBugs, prompt: prompt}
 	}
 
 	textResults := runTextPrompts(tempDir, "review", prompts, verbose, thinking, thinkingExplicit)
@@ -476,7 +632,7 @@ func runTextPrompts(tempDir string, label string, prompts []promptRun, verbose b
 					mu.Lock()
 					parts := make([]string, len(prompts))
 					for j, prompt := range prompts {
-						parts[j] = fmt.Sprintf("(%s/%s)=%s", prompt.spec.String(), ai.ReadOnly.ColoredLabel(), statuses[j])
+						parts[j] = fmt.Sprintf("(%s/%s/%s)=%s", prompt.spec.String(), prompt.track.label(), ai.ReadOnly.ColoredLabel(), statuses[j])
 					}
 					mu.Unlock()
 					fmt.Fprintf(os.Stderr, "\r\033[K%s AI %s: %s", spinner[idx], label, strings.Join(parts, " | "))

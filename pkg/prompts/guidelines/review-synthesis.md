@@ -33,7 +33,7 @@ Return JSON only. Do not wrap it in prose unless you must place it in a fenced
   "issues": [
     {
       "severity": "critical | high | medium | low",
-      "type": "security | correctness | data_integrity | performance | breaking_change | testing | maintainability",
+      "type": "security | correctness | data_integrity | performance | breaking_change | testing",
       "location": "path/to/file:line",
       "description": "specific impact and why it matters",
       "suggestion": "concrete fix or mitigation"

@@ -3,7 +3,6 @@
 ## Metadata
 - Domain: prmate - personal pull request helper CLI
 - Primary audience: LLM agents working on this codebase, human contributors
-- Last updated: 2026-09-17
 - Status: Active
 - Stability note: Sections marked `[STABLE]` should change rarely. Sections marked `[VOLATILE]` are expected to change often.
 
@@ -18,7 +17,6 @@ This file is the primary working context for the prmate project.
 - Temporary or branch-specific behavior should be documented here with clear cleanup notes.
 
 ### Quick update checklist
-- Refresh `Last updated` date.
 - Review `Current Work` and `Future Work`.
 - Validate `Critical Invariants`.
 - Update command, prompt, provider, or config references if behavior changed.
@@ -38,9 +36,9 @@ This file is the primary working context for the prmate project.
 - Go module: `pr`
 - Go version: `1.25.4`
 - Main commands:
-  - `prmate`: smart default. Inspects the current branch; if no open GitHub PR exists, runs describe with `codex`; if an open PR exists, runs review with `codex,claude`. Accepts `--think`.
+  - `prmate`: smart default. Inspects the current branch; if no open GitHub PR exists, runs describe with `codex`; if an open PR exists, runs review with `codex,claude` on both tracks. Accepts `--think`.
   - `prmate describe`: generate a PR title/body from a branch diff, then create or update a GitHub PR after user confirmation. Accepts `--think`.
-  - `prmate review`: review an existing GitHub PR, with either one reviewer or a default two-reviewer cross-check and synthesis flow. Accepts `--think`.
+  - `prmate review`: review an existing GitHub PR, with either one reviewer or a default two-reviewer cross-check and synthesis flow. With two reviewers it runs two independent tracks, bugs and architecture; `--no-arch` drops the second. Accepts `--think`.
 - Supported LLM CLI providers: `claude`, `codex`, `gemini`, `opencode`, each selectable as `<provider>` or `<provider>:<model>`
 - External runtime tools: `git`, `gh`, and at least one supported LLM CLI on `PATH`
 
@@ -51,7 +49,7 @@ The codebase is intentionally small and package-oriented. `cmd/` owns user workf
 There are two sources of instruction for every LLM run, and the split is deliberate:
 
 - `pkg/prompts/guidelines/*.md` own **structure and flow only**: what to read and in what order, what is in scope, the steps of each round, and the exact output contract. They carry no opinion about what good code or a good description looks like.
-- `GUIDE.md` at the repository root owns **judgment**: what counts as a finding, what to leave out, what blocks a merge, how a description reads. It is the user's canonical engineering guide, symlinked into each project from a dotfiles repo.
+- `GUIDE.md` at the repository root owns **judgment**: what counts as a finding on each review track, what to leave out, what blocks a merge, how a description reads. It is the user's canonical engineering guide, symlinked into each project from a dotfiles repo. Tuning what the bug or architecture track flags is a `GUIDE.md` edit, never a prompt edit.
 
 `GUIDE.md` is required. `requireProjectGuide` reads it from the root of the repository the command was invoked in and returns an error when it is missing or empty, so `prmate describe` and `prmate review` refuse to run rather than silently working to no standard. It is read from the invocation repo, never from a PR worktree: the symlink is gitignored so a worktree copy would be absent, and a checked-in one would let a PR rewrite the standard it is reviewed against.
 
@@ -102,7 +100,10 @@ Highest-risk areas:
     |       |-- describe.md
     |       |-- review.md
     |       |-- review-cross-check.md
-    |       `-- review-synthesis.md
+    |       |-- review-synthesis.md
+    |       |-- review-arch.md
+    |       |-- review-arch-cross-check.md
+    |       `-- review-arch-synthesis.md
     `-- ui/
         |-- ui.go
         `-- ui_test.go
@@ -158,9 +159,9 @@ sequenceDiagram
     S->>G: CurrentBranch()
     S->>G: GetCurrentBranchPullRequest()
     alt no open PR for current branch
-        S->>D: runDescribe("", "", "codex")
+        S->>D: runDescribeWithThinking("", "", "codex")
     else open PR exists
-        S->>R: runReview("<number>", "codex,claude")
+        S->>R: runReviewWithThinking("<number>", "codex,claude", both tracks)
     end
 ```
 
@@ -227,8 +228,8 @@ sequenceDiagram
     participant G as pkg/git
     participant A as pkg/ai
 
-    U->>R: prmate review --pr ref [--llm providers]
-    R->>R: Parse one or two unique providers
+    U->>R: prmate review --pr ref [--llm providers] [--no-arch]
+    R->>R: Parse one or two unique providers and the track list
     R->>G: GetPullRequest(ref)
     R->>G: Add detached worktree from origin/head or fetched PR head ref
     R->>G: DiffAgainstBase(tempDir, PR base branch)
@@ -238,13 +239,13 @@ sequenceDiagram
         A-->>R: JSON review
         R->>R: Parse and print Markdown report
     else two providers
-        R->>A: Round 1, independent reviews in parallel
-        A-->>R: Two JSON reviews
-        R->>A: Round 2, cross-check prompts in parallel
-        A-->>R: Two Markdown cross-checks
-        R->>A: Round 3, first provider synthesizes final JSON
-        A-->>R: Final JSON review
-        R->>R: Parse and print Markdown report
+        R->>A: Round 1, independent reviews per track in parallel
+        A-->>R: One JSON review per provider per track
+        R->>A: Round 2, cross-check prompts per track in parallel
+        A-->>R: One Markdown cross-check per provider per track
+        R->>A: Round 3, first provider synthesizes one final JSON per track in parallel
+        A-->>R: Final JSON reports
+        R->>R: Parse and print one Markdown report per track, bugs first
     end
     R->>R: Cleanup worktree and fetched PR ref
 ```
@@ -252,6 +253,8 @@ sequenceDiagram
 Key behavior:
 - `--pr` accepts a number or URL containing `/pull/<number>`.
 - Default reviewers are `codex,claude`.
+- `reviewTrack` is a closed enum: `trackBugs` and `trackArchitecture`. The paired flow runs the track list through every round, and the tracks never meet inside an LLM call: round 1 and round 2 prompts are built per track, round 3 synthesizes per track, and the reports are concatenated in Go. Default is both tracks; `--no-arch` is bugs only; the smart command always runs both.
+- The single-reviewer flow is bugs only. The architecture track exists to be cross-checked, so with one reviewer it is skipped with a note rather than run unverified.
 - Each `--llm` entry is an `ai.Spec`: `<provider>` or `<provider>:<model>`. `ai.ParseSpec` validates the provider against the closed set and requires a non-empty model after `:`. The model itself is passed through to the provider CLI unvalidated, since model names are external data.
 - At most two reviewers are supported. Duplicates are removed on the full spec string while preserving first-seen order, so `claude:opus,claude:sonnet` is two reviewers but `claude,claude` is one.
 - Reviewers are labelled by `Spec.String()` everywhere a name is user- or LLM-visible: progress lines, spinner statuses, failure notes, and the `provider="..."` attributes in cross-check and synthesis prompts. This is what keeps two models of one provider distinguishable to the synthesizer.
@@ -259,7 +262,7 @@ Key behavior:
 - `addWorktreeFromPullRequestHead` first tries `origin/<headRefName>`, then falls back to fetching `pull/<number>/head` into `refs/pr-tool/pr/<number>`.
 - `.pr-context.md` contains the project guide, project context, PR metadata, title, body, and local diff against the PR base branch. Review prompts instruct the LLM to read the guide first, then follow relevant domain-context pointers before reviewing, cross-checking, or synthesizing.
 - For PR review, project context is read from `CONTEXT.md` on the PR base ref when possible (`origin/<base>` then `<base>`), then falls back to the checked-out worktree. This avoids treating contributor changes to root context as authoritative reviewer instructions.
-- Review output must parse to `ReviewReport` JSON. The CLI tolerates fenced JSON and extracts a balanced top-level object when possible.
+- Bug track output must parse to `ReviewReport` JSON, which carries a verdict and severities. Architecture track output must parse to `ArchReport` JSON, which has neither: each finding carries `location`, `diverges_from`, `description`, `suggestion`. The CLI tolerates fenced JSON and extracts a balanced top-level object when possible. Round 1 responses are parsed before the cross-check so a malformed review fails early.
 
 ### 3.5 LLM provider adapter contracts
 
@@ -348,12 +351,13 @@ This tool passes PR title, PR body, local diff content, and selected worktree fi
 - Generated LLM context files should include root `CONTEXT.md` when present. PR review should prefer the base-ref version of `CONTEXT.md` over the PR-head version.
 - `GUIDE.md` stays required and stays read from the invocation repository root. Do not add a silent fallback, a default guide, or a worktree read path; a run with no guide must fail loudly.
 - Embedded prompt guidelines stay structure and flow only. Any rule about what makes a finding or a description good belongs in `GUIDE.md`.
-- `ReviewReport` JSON shape is a public internal contract between prompts and parser. Update prompt guidelines, parser, tests, and Markdown rendering together.
+- `ReviewReport` and `ArchReport` JSON shapes are public internal contracts between prompts and parser. Update prompt guidelines, parser, tests, and Markdown rendering together.
+- `ArchReport` has no verdict and no severity field. The architecture track never gates a merge, and the shape must stay unable to express one.
 - Keep prompt guidelines embedded through `pkg/prompts`; do not replace them with runtime file reads unless install and packaging behavior are redesigned.
 - Do not broaden LLM provider names in command parsing without adding provider adapter behavior and tests. Provider names stay a closed set in `ai.ParseSpec`; model names stay pass-through.
 - Anything that names a reviewer to the user or to another LLM uses `Spec.String()`, never `Spec.Provider`. Two reviewers on one provider are only distinguishable by the full spec.
 - Do not add new thinking levels for Codex or Claude without checking provider docs/help and updating validation tests.
-- Avoid broad repository exploration in review prompts. The current review guidelines intentionally constrain agents to changed files and directly referenced code.
+- Bug track prompts constrain agents to changed files and directly referenced code, with no repository search. Architecture track prompts widen that to the touched domain, one sibling domain, and targeted search for duplication the diff extends. Neither track tours the repository.
 
 ---
 
@@ -366,7 +370,7 @@ go test ./...
 ```
 
 Current package coverage:
-- `cmd`: prompt construction, reviewer spec list parsing (including two models of one provider), JSON extraction, and invalid PR validation.
+- `cmd`: prompt construction, reviewer spec list parsing (including two models of one provider), JSON extraction, track list selection, guideline loading per track, architecture report rendering, and invalid PR validation.
 - `cmd` smart default: no-open-PR vs open-PR dispatch behavior through injected operations.
 - `pkg/ai`: provider command construction, response parsing, mode labels, and output normalization.
 - `pkg/ai` thinking controls: provider-specific command arguments and unsupported-provider validation.
@@ -382,24 +386,6 @@ Testing guidance:
 - Avoid tests that require authenticated `gh` or real LLM CLI network access unless they are explicitly integration/manual checks.
 - For new external CLI provider behavior, test command argv construction and response parsing with fixture strings.
 - For changes to worktree lifecycle, add tests around helper functions where possible before reaching for end-to-end CLI tests.
-
-Verification run on 2026-05-27:
-
-```text
-go test ./...
-```
-
-Result:
-
-```text
-?    pr             [no test files]
-ok   pr/cmd         0.002s
-ok   pr/pkg/ai      0.002s
-?    pr/pkg/config  [no test files]
-ok   pr/pkg/git     0.119s
-ok   pr/pkg/prompts 0.002s
-ok   pr/pkg/ui      0.002s
-```
 
 ---
 
@@ -459,7 +445,7 @@ Setup behavior:
 
 ## 9. Current Work [VOLATILE]
 
-- Fixed stacked PR descriptions to use the existing PR target branch, including regression coverage for excluding parent changes and rejecting unavailable bases.
+- Architecture review track: two more reviewer runs per round with a pure maintainability focus, judged against the architecture review section of `GUIDE.md`.
 
 ---
 

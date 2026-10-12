@@ -28,7 +28,7 @@ func TestRunSmartDescribesWhenNoOpenPRExists(t *testing.T) {
 			}
 			return nil
 		},
-		review: func(prRef string, llms string, thinking string, thinkingExplicit bool) error {
+		review: func(prRef string, llms string, tracks []reviewTrack, thinking string, thinkingExplicit bool) error {
 			reviewCalled = true
 			return nil
 		},
@@ -61,10 +61,13 @@ func TestRunSmartReviewsWhenOpenPRExists(t *testing.T) {
 			describeCalled = true
 			return nil
 		},
-		review: func(prRef string, llms string, thinking string, thinkingExplicit bool) error {
+		review: func(prRef string, llms string, tracks []reviewTrack, thinking string, thinkingExplicit bool) error {
 			reviewCalled = true
 			if prRef != "123" || llms != smartReviewLLMs || thinking != "xhigh" || !thinkingExplicit {
 				t.Fatalf("review args = (%q, %q, %q, %v)", prRef, llms, thinking, thinkingExplicit)
+			}
+			if len(tracks) != 2 || tracks[0] != trackBugs || tracks[1] != trackArchitecture {
+				t.Fatalf("smart review should run both tracks, got %v", tracks)
 			}
 			return nil
 		},

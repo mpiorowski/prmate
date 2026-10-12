@@ -6,7 +6,7 @@ It installs a `prmate` command with a smart default plus two explicit workflows:
 
 - `prmate` inspects the current branch. If it has no open GitHub PR, it runs `prmate describe` with `codex`; if it already has an open PR, it runs `prmate review` with `codex,claude`.
 - `prmate describe` drafts a PR title/body from a branch diff, then creates or updates a GitHub PR.
-- `prmate review` reviews an existing GitHub PR. By default it runs two LLM reviewers, has them cross-check each other, and merges the validated findings into one final review.
+- `prmate review` reviews an existing GitHub PR. By default it runs two LLM reviewers on two independent tracks, bugs and architecture, has them cross-check each other within each track, and merges the validated findings into one final report per track.
 
 ## Requirements
 
@@ -111,6 +111,12 @@ Use a different pair:
 prmate review --pr 123 --llm gemini,codex
 ```
 
+Skip the architecture track and run the bug review only:
+
+```sh
+prmate review --pr 123 --no-arch
+```
+
 ### Picking models
 
 Each reviewer is a provider, optionally with a model: `<provider>` or `<provider>:<model>`. The model is passed straight through to that provider CLI's `--model` flag, so any value the CLI accepts works (aliases or full model ids). Without a model, the provider CLI picks its own default.
@@ -145,15 +151,17 @@ Provider mapping:
 
 ## Review Flow
 
-With two LLMs, `prmate review` runs three rounds:
+With two LLMs, `prmate review` runs two independent tracks through three rounds:
 
-1. Both LLMs independently review the PR.
-2. Each LLM cross-checks the other review.
-3. The first LLM synthesizes one final JSON review report, which the CLI prints as Markdown.
+1. Both LLMs independently review the PR, once for bugs and once for architecture. All four runs go in parallel.
+2. Each LLM cross-checks the other review within the same track. A bug reviewer never judges an architecture finding, and the other way round.
+3. The first LLM synthesizes one final JSON report per track, which the CLI prints as Markdown, bugs first.
 
-With one LLM, `prmate review` runs a single standard review.
+The bug report carries a verdict and can block the merge. The architecture report has no verdict and no severity: every finding is a comment naming what diverges and the sibling or sites it diverges from. `--no-arch` drops the second track.
 
-Every round is judged against your `GUIDE.md`, which is embedded in the context file the reviewers read. The prompts decide the shape of the work; the guide decides the verdict.
+With one LLM, `prmate review` runs a single bug review. The architecture track needs a second reviewer to cross-check, so it is skipped with a note.
+
+Every round is judged against your `GUIDE.md`, which is embedded in the context file the reviewers read. The prompts decide the shape of the work; the guide decides what counts as a finding on each track and what blocks a merge.
 
 ## Configuration
 
