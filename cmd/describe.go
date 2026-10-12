@@ -67,7 +67,7 @@ func DescribeCommand() *cli.Command {
 			&cli.StringFlag{
 				Name:    "llm",
 				Usage:   "Optional. LLM to use (providers: claude, gemini, codex, opencode). Append :<model> to pick a model, e.g. claude:opus",
-				Value:   "claude",
+				Value:   defaultDescribeLLM,
 				Aliases: []string{"l"},
 			},
 			ThinkingFlag(),

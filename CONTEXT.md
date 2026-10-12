@@ -36,7 +36,6 @@ This file is the primary working context for the prmate project.
 - Go module: `pr`
 - Go version: `1.25.4`
 - Main commands:
-  - `prmate`: smart default. Inspects the current branch; if no open GitHub PR exists, runs describe with `codex`; if an open PR exists, runs review with `codex,claude` on both tracks. Accepts `--think`.
   - `prmate describe`: generate a PR title/body from a branch diff, then create or update a GitHub PR after user confirmation. Accepts `--think`.
   - `prmate review`: review an existing GitHub PR, with either one reviewer or a default two-reviewer cross-check and synthesis flow. With two reviewers it runs two independent tracks, bugs and architecture; `--no-arch` drops the second. Accepts `--think`.
 - Supported LLM CLI providers: `claude`, `codex`, `gemini`, `opencode`, each selectable as `<provider>` or `<provider>:<model>`
@@ -81,8 +80,6 @@ Highest-risk areas:
 |   |-- pr_context.go
 |   |-- review.go
 |   |-- review_test.go
-|   |-- smart.go
-|   |-- smart_test.go
 |   `-- worktree.go
 `-- pkg/
     |-- ai/
@@ -123,13 +120,9 @@ Notes:
 ```mermaid
 flowchart LR
     USER["User terminal"] --> CLI["prmate CLI<br/>urfave/cli"]
-    CLI --> SMART["cmd.RunSmart<br/>default action"]
     CLI --> DESCRIBE["cmd.DescribeCommand"]
     CLI --> REVIEW["cmd.ReviewCommand"]
 
-    SMART --> GIT
-    SMART --> DESCRIBE
-    SMART --> REVIEW
     DESCRIBE --> GIT["pkg/git<br/>git + gh wrappers"]
     REVIEW --> GIT
     DESCRIBE --> PROMPTS["pkg/prompts<br/>embedded guidelines"]
@@ -145,34 +138,7 @@ flowchart LR
     AI --> PROVIDERS["claude / codex / gemini / opencode"]
 ```
 
-### 3.2 Smart default `prmate` flow
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant S as cmd/smart.go
-    participant G as pkg/git
-    participant D as cmd/describe.go
-    participant R as cmd/review.go
-
-    U->>S: prmate
-    S->>G: CurrentBranch()
-    S->>G: GetCurrentBranchPullRequest()
-    alt no open PR for current branch
-        S->>D: runDescribeWithThinking("", "", "codex")
-    else open PR exists
-        S->>R: runReviewWithThinking("<number>", "codex,claude", both tracks)
-    end
-```
-
-Key behavior:
-- The root `prmate` command is a convenience dispatcher, not a third independent workflow.
-- It requires a named current branch. Detached HEAD returns an error.
-- PR detection uses `gh pr view` with no PR argument, which lets GitHub CLI resolve the PR for the checked-out branch. This is intended to work for branches created by `gh pr checkout <number>`, including contributor fork PRs.
-- No-open-PR mode passes an empty branch to `runDescribe`, so describe uses the current worktree rather than creating a temporary worktree.
-- Open-PR mode reviews the discovered PR number with `codex,claude`.
-
-### 3.3 `prmate describe` flow
+### 3.2 `prmate describe` flow
 
 ```mermaid
 sequenceDiagram
@@ -219,7 +185,7 @@ Key behavior:
 - The first Markdown H1 becomes the PR title. Remaining Markdown becomes the PR body.
 - Creating or updating a PR is gated by an interactive `ui.Confirm` prompt.
 
-### 3.4 `prmate review` flow
+### 3.3 `prmate review` flow
 
 ```mermaid
 sequenceDiagram
@@ -252,8 +218,8 @@ sequenceDiagram
 
 Key behavior:
 - `--pr` accepts a number or URL containing `/pull/<number>`.
-- Default reviewers are `codex,claude`.
-- `reviewTrack` is a closed enum: `trackBugs` and `trackArchitecture`. The paired flow runs the track list through every round, and the tracks never meet inside an LLM call: round 1 and round 2 prompts are built per track, round 3 synthesizes per track, and the reports are concatenated in Go. Default is both tracks; `--no-arch` is bugs only; the smart command always runs both.
+- Default reviewers are `defaultReviewLLMs` from `cmd/flags.go`, currently `codex:gpt-6-astra,claude:claude-opus-5-5`. `prmate describe` defaults to `defaultDescribeLLM`, currently `claude:claude-opus-5-5`, pinned in the same file.
+- `reviewTrack` is a closed enum: `trackBugs` and `trackArchitecture`. The paired flow runs the track list through every round, and the tracks never meet inside an LLM call: round 1 and round 2 prompts are built per track, round 3 synthesizes per track, and the reports are concatenated in Go. Default is both tracks; `--no-arch` is bugs only.
 - The single-reviewer flow is bugs only. The architecture track exists to be cross-checked, so with one reviewer it is skipped with a note rather than run unverified.
 - Each `--llm` entry is an `ai.Spec`: `<provider>` or `<provider>:<model>`. `ai.ParseSpec` validates the provider against the closed set and requires a non-empty model after `:`. The model itself is passed through to the provider CLI unvalidated, since model names are external data.
 - At most two reviewers are supported. Duplicates are removed on the full spec string while preserving first-seen order, so `claude:opus,claude:sonnet` is two reviewers but `claude,claude` is one.
@@ -264,7 +230,7 @@ Key behavior:
 - For PR review, project context is read from `CONTEXT.md` on the PR base ref when possible (`origin/<base>` then `<base>`), then falls back to the checked-out worktree. This avoids treating contributor changes to root context as authoritative reviewer instructions.
 - Bug track output must parse to `ReviewReport` JSON, which carries a verdict and severities. Architecture track output must parse to `ArchReport` JSON, which has neither: each finding carries `location`, `diverges_from`, `description`, `suggestion`. The CLI tolerates fenced JSON and extracts a balanced top-level object when possible. Round 1 responses are parsed before the cross-check so a malformed review fails early.
 
-### 3.5 LLM provider adapter contracts
+### 3.4 LLM provider adapter contracts
 
 `pkg/ai` builds provider-specific commands and normalizes each provider into:
 
@@ -285,7 +251,7 @@ Provider command expectations:
 - OpenCode: `opencode run --format json <prompt>`, plus `--model <model>` when the spec names one (OpenCode expects `provider/model`).
 
 Thinking/reasoning effort mapping (validated per provider, independent of the model override):
-- User-facing flag: `--think <level>` (alias `--thinking`) on root `prmate`, `prmate describe`, and `prmate review`. Default is `high`.
+- User-facing flag: `--think <level>` (alias `--thinking`) on `prmate describe` and `prmate review`. Default is `high`.
 - Codex: reasoning effort is passed as `-c model_reasoning_effort="<level>"`; accepted levels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`.
 - Claude: reasoning effort is passed as `--effort <level>`; accepted levels are `low`, `medium`, `high`, `xhigh`, `max`.
 - OpenCode: passed through as `--variant <level>` because OpenCode variants are provider/model-specific and may be custom.
@@ -342,7 +308,8 @@ This tool passes PR title, PR body, local diff content, and selected worktree fi
 ## 5. Critical Invariants [STABLE]
 
 - Keep the installed binary command name as `prmate` unless install docs and setup behavior are updated together.
-- Keep root `prmate` behavior aligned with `README.md`: no open PR means describe with `codex`; open PR means review with `codex,claude`.
+- The root `prmate` command only prints help. There are exactly two workflows, `describe` and `review`, both invoked explicitly; do not add a dispatcher that guesses which one the user meant.
+- Model and reasoning defaults live only in `cmd/flags.go`, and every default spec names its model. Never reintroduce a bare provider default: it would silently follow the machine's CLI config or account default.
 - `cmd/` should own top-level user workflows and orchestration. Keep external command execution details in `pkg/git` or `pkg/ai`.
 - `prmate describe` and `prmate review` should continue running LLMs in `ai.ReadOnly` mode unless a command is explicitly designed to modify code.
 - Do not skip the interactive confirmation before creating or updating a PR.
@@ -371,7 +338,6 @@ go test ./...
 
 Current package coverage:
 - `cmd`: prompt construction, reviewer spec list parsing (including two models of one provider), JSON extraction, track list selection, guideline loading per track, architecture report rendering, and invalid PR validation.
-- `cmd` smart default: no-open-PR vs open-PR dispatch behavior through injected operations.
 - `pkg/ai`: provider command construction, response parsing, mode labels, and output normalization.
 - `pkg/ai` thinking controls: provider-specific command arguments and unsupported-provider validation.
 - `pkg/ai` spec parsing: provider/model splitting, label formatting, and rejection of unknown providers or empty models.

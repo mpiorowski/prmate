@@ -23,13 +23,6 @@ func main() {
 	app := &cli.App{
 		Name:  "pr",
 		Usage: "Personal pull request helper",
-		Flags: []cli.Flag{
-			cmd.ThinkingFlag(),
-		},
-		Action: func(c *cli.Context) error {
-			thinking, thinkingExplicit := cmd.ThinkingFromContext(c)
-			return cmd.RunSmart(thinking, thinkingExplicit)
-		},
 		Commands: []*cli.Command{
 			cmd.DescribeCommand(),
 			cmd.ReviewCommand(),

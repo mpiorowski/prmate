@@ -2,9 +2,8 @@
 
 prmate is a small personal CLI for drafting pull request descriptions and running AI-assisted pull request reviews.
 
-It installs a `prmate` command with a smart default plus two explicit workflows:
+It installs a `prmate` command with two explicit workflows:
 
-- `prmate` inspects the current branch. If it has no open GitHub PR, it runs `prmate describe` with `codex`; if it already has an open PR, it runs `prmate review` with `codex,claude`.
 - `prmate describe` drafts a PR title/body from a branch diff, then creates or updates a GitHub PR.
 - `prmate review` reviews an existing GitHub PR. By default it runs two LLM reviewers on two independent tracks, bugs and architecture, has them cross-check each other within each track, and merges the validated findings into one final report per track.
 
@@ -96,8 +95,10 @@ prmate review --pr 123
 The default review uses:
 
 ```sh
---llm codex,claude
+--llm codex:gpt-6-astra,claude:claude-opus-5-5
 ```
+
+Every default names its model, so a review runs the same models on every machine regardless of what the provider CLI or your account treats as default. The pinned models and the default thinking level live together in `cmd/flags.go`; bump them there when a new model ships.
 
 Use one reviewer for a simpler review:
 
@@ -137,7 +138,6 @@ prmate describe --llm claude:opus
 Thinking/reasoning effort defaults to `high` where the selected provider supports it:
 
 ```sh
-prmate --think high
 prmate describe --think high
 prmate review --pr 123 --think xhigh
 ```

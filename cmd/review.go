@@ -162,7 +162,7 @@ func ReviewCommand() *cli.Command {
 			&cli.StringFlag{
 				Name:    "llm",
 				Usage:   "LLM(s) to use. One reviewer runs a standard review; two comma-separated reviewers cross-check and merge findings. Providers: claude, gemini, codex, opencode. Append :<model> to pick a model, e.g. claude:opus,claude:sonnet",
-				Value:   "codex,claude",
+				Value:   defaultReviewLLMs,
 				Aliases: []string{"l"},
 			},
 			&cli.BoolFlag{

@@ -1,7 +1,6 @@
 package git
 
 import (
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,20 +90,6 @@ func TestParsePullRequestRejectsEmptyPullRequest(t *testing.T) {
 	}
 }
 
-func TestIsOpenPullRequest(t *testing.T) {
-	t.Parallel()
-
-	if !isOpenPullRequest(PullRequest{State: "OPEN"}) {
-		t.Fatal("expected open PR to match")
-	}
-	if isOpenPullRequest(PullRequest{State: "CLOSED", Closed: true}) {
-		t.Fatal("did not expect closed PR to match")
-	}
-	if isOpenPullRequest(PullRequest{State: "MERGED", Closed: true}) {
-		t.Fatal("did not expect merged PR to match")
-	}
-}
-
 func TestParsePullRequestListReturnsNotFoundForEmptyList(t *testing.T) {
 	t.Parallel()
 
@@ -122,18 +107,6 @@ func TestParsePullRequestListRejectsEmptyPullRequest(t *testing.T) {
 
 	if _, _, err := parsePullRequestList(`[{}]`); err == nil {
 		t.Fatal("expected error")
-	}
-}
-
-func TestIsNoPullRequestForCurrentBranchError(t *testing.T) {
-	t.Parallel()
-
-	if !isNoPullRequestForCurrentBranchError(errors.New("exit status 1\nno pull requests found for branch \"main\"")) {
-		t.Fatal("expected gh no-PR message to match")
-	}
-
-	if isNoPullRequestForCurrentBranchError(errors.New("error connecting to api.github.com")) {
-		t.Fatal("did not expect unrelated gh error to match")
 	}
 }
 
