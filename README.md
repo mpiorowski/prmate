@@ -84,7 +84,7 @@ Update an existing PR instead of creating a new one:
 prmate describe --pr 123
 ```
 
-With `--pr`, the diff compares the selected local branch to the PR’s target branch fetched from GitHub, so stacked PR descriptions exclude parent changes. The command stops if that base cannot be fetched or resolved. Without `--pr`, the diff uses `origin/main`.
+With `--pr`, the diff compares the selected local branch to the PR’s target branch fetched from GitHub, so stacked PR descriptions exclude parent changes. The command stops if that base cannot be fetched or resolved. Without `--pr`, describe looks up the open PR for the branch and, when there is one, uses its target branch and updates that PR, so stacked branches work without flags. Only a branch with no open PR diffs against `origin/main` and gets a new PR.
 
 Review a PR with the default paired flow:
 

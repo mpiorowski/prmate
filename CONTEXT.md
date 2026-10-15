@@ -158,7 +158,12 @@ sequenceDiagram
         D->>G: AddWorktree(branch)
         D->>D: Schedule worktree cleanup
     end
-    D->>G: Resolve and fetch PR base when --pr is set
+    alt --pr provided
+        D->>G: GetPullRequest(ref)
+    else no --pr
+        D->>G: GetPullRequestForBranch(branch), open PRs only
+    end
+    D->>G: Fetch PR base when a PR was found
     D->>G: DiffAgainstBase(worktree, resolved base)
     D->>D: Write .pr-diff-context.md with root CONTEXT.md + diff
     D->>A: RunWithOptions(..., ReadOnly)
@@ -178,8 +183,9 @@ Key behavior:
 - Current-branch mode writes `.pr-diff-context.md` into the repo root and removes it on cleanup.
 - Explicit branch mode creates a temporary git worktree and removes it on cleanup.
 - `.pr-diff-context.md` embeds root `GUIDE.md`, then root `CONTEXT.md` when present, then the branch diff, and instructs the LLM to read the guide first and follow relevant domain-context pointers.
-- With `--pr`, describe reads the PR base branch from GitHub and fetches it before diffing local HEAD against `origin/<base>` using the merge base. Metadata/fetch failures stop the command. The selected base is shown in progress output and used in the context file and prompt.
-- Without `--pr`, describe continues to use `origin/main`.
+- `describeTarget` picks the PR and the base. With `--pr`, it uses that PR. Without `--pr`, it looks up the open PR whose head is the described branch, and when one exists describe behaves exactly as if `--pr <number>` had been passed: same base, and the confirmation updates that PR instead of creating a new one. This is what makes stacked branches (e.g. `gh stack`) diff against their parent.
+- When a PR is selected, describe reads its base branch from GitHub and fetches it before diffing local HEAD against `origin/<base>` using the merge base. Metadata, lookup, and fetch failures stop the command. The selected base is shown in progress output and used in the context file and prompt.
+- Only a branch with no open PR diffs against `origin/main`, and `gh pr create` then targets the repository default branch.
 - `DiffAgainstBase` never falls back to main when an explicit base cannot be resolved; this applies to both describe and review.
 - The LLM must wrap final Markdown in `<pr_description>` tags. A fallback trims known Claude Code watermark lines and uses the raw message.
 - The first Markdown H1 becomes the PR title. Remaining Markdown becomes the PR body.
@@ -400,7 +406,7 @@ Setup behavior:
 
 - Provider CLIs are external and their JSON/JSONL output formats may change. `pkg/ai` is the compatibility boundary.
 - Provider thinking flags are not uniform: Codex and Claude leave model selection to their CLI defaults, Codex uses a config override for effort, Claude uses `--effort`, OpenCode uses variants, and Gemini currently has no supported mapping. The CLI defaults to `high` for supported providers and ignores that implicit default for Gemini.
-- `prmate describe` without `--pr` still uses `origin/main`; it does not infer a stacked parent or the repository default branch.
+- A branch with no open PR yet still diffs against `origin/main` and is created against the default branch. A stacked branch must have its PR opened first (e.g. `gh stack submit`) before describe picks up its parent.
 - `git.FetchOrigin` calls are best effort in some worktree creation paths. This is intentional for local-only branches, but it means stale remotes can affect generated diffs.
 - `BranchExists` runs git in the current process directory rather than accepting an explicit repo path.
 - Every `prmate describe` and `prmate review` run now requires `GUIDE.md` at the invocation repository root. A project without the symlink cannot use the tool until one is added.
@@ -418,7 +424,7 @@ Setup behavior:
 ## 10. Future Work [VOLATILE]
 
 Potential improvements worth considering:
-- Support repository default base branch detection instead of hardcoded `origin/main` in `prmate describe` without `--pr`.
+- For a branch with no open PR, infer the stacked parent (e.g. `gh stack view --json`) or the repository default branch instead of hardcoded `origin/main`, and pass it as `--base` to `gh pr create`.
 - Consider a `prmate doctor` check that reports a missing `GUIDE.md` before a run rather than at run time.
 - Add explicit tests for OpenCode parsing and verbose streaming edge cases.
 - Add a non-interactive or dry-run mode if automation use cases become important.

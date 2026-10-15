@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/urfave/cli/v2"
@@ -106,11 +107,6 @@ func runDescribeWithThinking(branch string, prRef string, llm string, thinking s
 	if err != nil {
 		return err
 	}
-	baseRef, err := describeBaseRef(prRef, git.GetPullRequest, git.FetchOrigin)
-	if err != nil {
-		return err
-	}
-
 	var worktreeDir string
 	var cleanup func()
 
@@ -155,6 +151,15 @@ func runDescribeWithThinking(branch string, prRef string, llm string, thinking s
 	}
 
 	defer cleanup()
+
+	explicitPR := prRef != ""
+	baseRef, prRef, err := describeTarget(prRef, branch, git.GetPullRequest, git.GetPullRequestForBranch, git.FetchOrigin)
+	if err != nil {
+		return err
+	}
+	if !explicitPR && prRef != "" {
+		ui.Step("Found open PR #%s for %s", prRef, ui.Emphasize(branch))
+	}
 
 	ui.Step("Comparing against %s", ui.Emphasize(baseRef))
 	diff, err := git.DiffAgainstBase(worktreeDir, baseRef)
@@ -230,20 +235,35 @@ Follow these PR description guidelines:
 	return nil
 }
 
-func describeBaseRef(prRef string, getPR func(string) (git.PullRequest, error), fetch func(string) error) (string, error) {
-	if prRef == "" {
-		return "origin/main", nil
-	}
-	pr, err := getPR(prRef)
-	if err != nil {
-		return "", fmt.Errorf("failed to get PR metadata: %w", err)
+// describeTarget picks the base to diff against and the PR to update. An
+// explicit --pr wins. Otherwise the branch's open PR is used, so a stacked
+// branch diffs against its parent rather than main. Only a branch with no
+// open PR falls back to origin/main and gets a new PR.
+func describeTarget(prRef string, branch string, getPR func(string) (git.PullRequest, error), findPR func(string) (git.PullRequest, bool, error), fetch func(string) error) (string, string, error) {
+	var pr git.PullRequest
+	if prRef != "" {
+		found, err := getPR(prRef)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get PR metadata: %w", err)
+		}
+		pr = found
+	} else {
+		found, ok, err := findPR(branch)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to look up open PR for %s: %w", branch, err)
+		}
+		if !ok {
+			return "origin/main", "", nil
+		}
+		pr = found
+		prRef = strconv.Itoa(pr.Number)
 	}
 	if strings.TrimSpace(pr.BaseRefName) == "" {
-		return "", fmt.Errorf("PR %s has no base branch", prRef)
+		return "", "", fmt.Errorf("PR %s has no base branch", prRef)
 	}
-	err = fetch(pr.BaseRefName)
+	err := fetch(pr.BaseRefName)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch PR base branch %s: %w", pr.BaseRefName, err)
+		return "", "", fmt.Errorf("failed to fetch PR base branch %s: %w", pr.BaseRefName, err)
 	}
-	return "origin/" + pr.BaseRefName, nil
+	return "origin/" + pr.BaseRefName, prRef, nil
 }
