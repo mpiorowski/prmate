@@ -95,7 +95,7 @@ prmate review --pr 123
 The default review uses:
 
 ```sh
---llm codex:gpt-6-astra,claude:claude-opus-5-5
+--llm claude:claude-opus-5-5,codex:gpt-6-astra
 ```
 
 Every default names its model, so a review runs the same models on every machine regardless of what the provider CLI or your account treats as default. The pinned models and the default thinking level live together in `cmd/flags.go`; bump them there when a new model ships.

@@ -11,7 +11,7 @@ const (
 	defaultCodexModel    = "gpt-6-astra"
 	defaultClaudeModel   = "claude-opus-5-5"
 	defaultDescribeLLM   = "claude:" + defaultClaudeModel
-	defaultReviewLLMs    = "codex:" + defaultCodexModel + ",claude:" + defaultClaudeModel
+	defaultReviewLLMs    = "claude:" + defaultClaudeModel + ",codex:" + defaultCodexModel
 	thinkingFlagUsage    = "Optional. Thinking/reasoning level. Provider support: codex none|minimal|low|medium|high|xhigh; claude low|medium|high|xhigh|max; opencode provider variant. Defaults to high for supported providers; Gemini only errors if this flag is explicitly set."
 )
 

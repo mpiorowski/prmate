@@ -5,8 +5,8 @@ Draft the title and description for this branch.
 ## Read first
 
 1. The `<project_guide>` block in the diff context file. Its PR descriptions
-   section is the standard for what a description says and how it says it.
-   Apply it as written.
+   section is the standard for what a description says and how it says it,
+   including the length budget. Apply it as written.
 2. The `<project_context>` block in the same file, plus any domain context
    files it points to that are relevant to the diff. Use them to name the
    domains and boundaries the diff touches in the project's own terms; file
@@ -20,37 +20,35 @@ Markdown, with the PR title as the first H1:
 ```markdown
 # Clear, specific PR title
 
-One short paragraph, no heading: what a user or operator experiences before
-and after this change, and why it is being made now.
+## Summary
+At most three sentences: what was wrong, what changes, what it costs or
+unlocks. No list of what the screen or the code now contains.
 
 ## Footprint
-- First line: whether the diff stays inside one domain. When it crosses,
-  name each domain as the project context names it and the public surface
-  the crossing goes through.
-- One line per domain touched: what changed there, and whether its public
-  surface changed.
-- One line for the boundaries the diff crosses and one for those it leaves
-  alone. The project guide lists the boundaries.
+- Containment: inside one domain, or which domains and through what public
+  surface. Whether a public surface changed, and what callers see differently.
+- Boundaries crossed, one line. Boundaries left alone that a reviewer would
+  ask about, one line.
+- Gating and revert, one line: flags, rollout, what undoing it takes.
 
 ## Review focus
-- The decisions in the diff a reviewer has to judge rather than check, each
-  with a `path/to/file` pointer. Drop the section when the diff holds none.
-
-## Blast radius
-- Who is affected, how it is gated or rolled out, what downstream consumers
-  change, and how it is reverted. A single line is fine when the answer is
-  "the touched screen only".
+- At most three decisions a reviewer has to judge rather than check. At most
+  two sentences each, ending with a `path/to/file` pointer. Drop the section
+  when the diff holds none.
 
 ## Screenshots / Video
 - Only for visible UI changes. When assets are not available, write "Not
   included in this draft; attach before review."
 
 ## Testing
-- Automated: tests added or updated, or "Not run" with the reason.
-- Manual: verification steps and observed outcomes, or "Not run" with the
-  reason.
+- Automated: the behaviors now covered, in one or two lines, and whether the
+  tests ran.
+- Manual: steps and outcomes, or "Not run" with the reason.
 ```
 
-The lead paragraph, `Footprint`, `Blast radius`, and `Testing` are always
-present. `Review focus` and `Screenshots / Video` appear only when the diff
-gives them content. Do not add sections beyond these.
+`Summary`, `Footprint`, and `Testing` are always present. `Review focus` and
+`Screenshots / Video` appear only when the diff gives them content. Do not add
+sections beyond these. A fact appears in one section only; when it is a
+decision it lives in `Review focus` and is not restated elsewhere. The only
+code in the body is a file path pointer; module and function names stay in
+the diff. Everything before `Testing` fits in 250 words.

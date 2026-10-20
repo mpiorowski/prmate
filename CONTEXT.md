@@ -224,7 +224,7 @@ sequenceDiagram
 
 Key behavior:
 - `--pr` accepts a number or URL containing `/pull/<number>`.
-- Default reviewers are `defaultReviewLLMs` from `cmd/flags.go`, currently `codex:gpt-6-astra,claude:claude-opus-5-5`. `prmate describe` defaults to `defaultDescribeLLM`, currently `claude:claude-opus-5-5`, pinned in the same file.
+- Default reviewers are `defaultReviewLLMs` from `cmd/flags.go`, currently `claude:claude-opus-5-5,codex:gpt-6-astra`, so Claude is the round 3 synthesizer. `prmate describe` defaults to `defaultDescribeLLM`, currently `claude:claude-opus-5-5`, pinned in the same file.
 - `reviewTrack` is a closed enum: `trackBugs` and `trackArchitecture`. The paired flow runs the track list through every round, and the tracks never meet inside an LLM call: round 1 and round 2 prompts are built per track, round 3 synthesizes per track, and the reports are concatenated in Go. Default is both tracks; `--no-arch` is bugs only.
 - The single-reviewer flow is bugs only. The architecture track exists to be cross-checked, so with one reviewer it is skipped with a note rather than run unverified.
 - Each `--llm` entry is an `ai.Spec`: `<provider>` or `<provider>:<model>`. `ai.ParseSpec` validates the provider against the closed set and requires a non-empty model after `:`. The model itself is passed through to the provider CLI unvalidated, since model names are external data.
