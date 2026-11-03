@@ -284,7 +284,7 @@ func TestLoadTrackGuidelinesForEveryTrack(t *testing.T) {
 func TestRenderArchitectureReportHasNoVerdict(t *testing.T) {
 	t.Parallel()
 
-	response := ai.Response{FinalMessage: "```json\n{\n  \"summary\": \"fits well\",\n  \"findings\": [\n    {\n      \"cost\": \"low\",\n      \"location\": \"app/billing/ui.rs:40\",\n      \"diverges_from\": \"app/orders/ui.rs\",\n      \"description\": \"naming drifts from the sibling\",\n      \"suggestion\": \"rename to match\"\n    },\n    {\n      \"cost\": \"high\",\n      \"location\": \"app/billing/svc.rs:12\",\n      \"diverges_from\": \"app/orders/svc.rs\",\n      \"description\": \"logs inside the pure module\",\n      \"suggestion\": \"move the tracing call to the job entry point\"\n    }\n  ],\n  \"positives\": [\"follows the domain layout\"]\n}\n```"}
+	response := ai.Response{FinalMessage: "```json\n{\n  \"summary\": \"fits well\",\n  \"findings\": [\n    {\n      \"cost\": \"low\",\n      \"impact\": \"Billing names its screens differently from every other domain.\",\n      \"location\": \"app/billing/ui.rs:40\",\n      \"diverges_from\": \"app/orders/ui.rs\",\n      \"description\": \"naming drifts from the sibling\",\n      \"suggestion\": \"rename to match\"\n    },\n    {\n      \"cost\": \"high\",\n      \"impact\": \"Billing logs from inside its pure module, so every future change there pays for untangling it.\",\n      \"location\": \"app/billing/svc.rs:12\",\n      \"diverges_from\": \"app/orders/svc.rs\",\n      \"description\": \"logs inside the pure module\",\n      \"suggestion\": \"move the tracing call to the job entry point\"\n    }\n  ],\n  \"positives\": [\"follows the domain layout\"]\n}\n```"}
 
 	got, err := renderTrackReport(trackArchitecture, response)
 	if err != nil {
@@ -293,9 +293,9 @@ func TestRenderArchitectureReportHasNoVerdict(t *testing.T) {
 	for _, want := range []string{
 		"## Architecture Review Summary",
 		"fits well",
-		"[HIGH] `app/billing/svc.rs:12`",
-		"diverges from `app/orders/svc.rs`",
-		"[LOW] `app/billing/ui.rs:40`",
+		"- **[HIGH]** Billing logs from inside its pure module",
+		"  - `app/billing/svc.rs:12` diverges from `app/orders/svc.rs`",
+		"- **[LOW]** Billing names its screens differently",
 		"logs inside the pure module",
 		"*Suggestion:* move the tracing call",
 		"follows the domain layout",
@@ -315,13 +315,50 @@ func TestRenderArchitectureReportHasNoVerdict(t *testing.T) {
 func TestParseArchReportRejectsUnknownCost(t *testing.T) {
 	t.Parallel()
 
-	response := ai.Response{FinalMessage: `{"summary":"x","findings":[{"cost":"critical","location":"a.go:1","diverges_from":"b.go","description":"d","suggestion":"s"}],"positives":[]}`}
+	response := ai.Response{FinalMessage: `{"summary":"x","findings":[{"cost":"critical","impact":"i","location":"a.go:1","diverges_from":"b.go","description":"d","suggestion":"s"}],"positives":[]}`}
 	_, err := parseArchReport(response)
 	if err == nil {
 		t.Fatal("expected unknown cost to be rejected")
 	}
 	if !strings.Contains(err.Error(), "unknown cost") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRenderBugReportLeadsWithImpact(t *testing.T) {
+	t.Parallel()
+
+	response := ai.Response{FinalMessage: `{"summary":"one real problem","verdict":"NEEDS_CHANGES","issues":[{"severity":"medium","type":"correctness","impact":"The verify page reloads while the client is typing their code and wipes the field.","location":"web/verify.html.heex:76","description":"the countdown script calls location.replace when the resend timer hits zero","suggestion":"swap the button label in place instead of navigating"}],"positives":["gate goes through one predicate"]}`}
+
+	got, err := renderTrackReport(trackBugs, response)
+	if err != nil {
+		t.Fatalf("renderTrackReport returned error: %v", err)
+	}
+	for _, want := range []string{
+		"**Verdict:** NEEDS_CHANGES",
+		"- **[MEDIUM] correctness** The verify page reloads while the client is typing their code and wipes the field.",
+		"  - `web/verify.html.heex:76`",
+		"  - the countdown script calls location.replace",
+		"*Suggestion:* swap the button label",
+		"gate goes through one predicate",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("bug report missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestParseReportsRejectFindingWithoutImpact(t *testing.T) {
+	t.Parallel()
+
+	bugs := ai.Response{FinalMessage: `{"summary":"x","verdict":"COMMENT","issues":[{"severity":"low","type":"testing","location":"a.go:1","description":"d","suggestion":"s"}],"positives":[]}`}
+	if _, err := parseReviewReport(bugs); err == nil || !strings.Contains(err.Error(), "no impact") {
+		t.Fatalf("expected bug issue without impact to be rejected, got: %v", err)
+	}
+
+	arch := ai.Response{FinalMessage: `{"summary":"x","findings":[{"cost":"low","impact":"  ","location":"a.go:1","diverges_from":"b.go","description":"d","suggestion":"s"}],"positives":[]}`}
+	if _, err := parseArchReport(arch); err == nil || !strings.Contains(err.Error(), "no impact") {
+		t.Fatalf("expected architecture finding without impact to be rejected, got: %v", err)
 	}
 }
 

@@ -35,8 +35,9 @@ Return JSON only. Do not wrap it in prose unless you must place it in a fenced
     {
       "severity": "critical | high | medium | low",
       "type": "security | correctness | data_integrity | performance | breaking_change | testing",
+      "impact": "one sentence: what is wrong and what it does to the app",
       "location": "path/to/file:line",
-      "description": "specific impact and why it matters",
+      "description": "the evidence: the code path that produces the impact",
       "suggestion": "concrete fix or mitigation"
     }
   ],
@@ -50,6 +51,15 @@ Return JSON only. Do not wrap it in prose unless you must place it in a fenced
 
 - `verdict`, `severity`, and `type` accept only the values listed above. The
   project guide decides which value a given finding warrants.
+- `impact` is the headline. It is one sentence that a reader with no file
+  open understands: what is wrong and what it does to the app. No paths, no
+  function names, no reasoning. It is required; an issue without one is not
+  reported.
 - `location` is `path/to/file:line`.
+- `description` is the evidence for `impact`, kept to a few sentences. The
+  paths and names go here. It states the problem only: never what cannot
+  happen, and never how the finding was reached.
+- One issue per entry. A second problem is its own entry or is left out, and
+  `suggestion` fixes only the issue it belongs to.
 - `issues` is an empty array when there is nothing to report.
 - Keep `summary` and each `positives` entry to one short line.

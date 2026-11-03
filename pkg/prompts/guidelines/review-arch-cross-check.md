@@ -12,8 +12,8 @@ independent architecture review of the same pull request.
 
 ## Steps
 
-1. For each peer finding, open the path or sites named in `diverges_from` and
-   confirm the divergence is real in the worktree.
+1. For each peer finding, open the reference in `diverges_from` and the sites
+   its description names, and confirm the divergence is real in the worktree.
 2. Name the findings to drop, re-cost, merge, or rewrite.
 3. Compare both reviews and call out anything real that neither caught.
 

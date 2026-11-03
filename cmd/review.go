@@ -17,9 +17,12 @@ import (
 	"pr/pkg/ui"
 )
 
+// ReviewIssue is one bug finding. Impact is the headline a reader with no
+// file open can act on; Location and Description are the evidence for it.
 type ReviewIssue struct {
 	Severity    string `json:"severity"`
 	Type        string `json:"type"`
+	Impact      string `json:"impact"`
 	Location    string `json:"location"`
 	Description string `json:"description"`
 	Suggestion  string `json:"suggestion"`
@@ -34,9 +37,11 @@ type ReviewReport struct {
 
 // ArchFinding is one architecture comment. It carries no severity and no
 // verdict: the architecture track never gates a merge, so the shape cannot
-// express one.
+// express one. Impact is the headline a reader with no file open can act on;
+// Location, DivergesFrom and Description are the evidence for it.
 type ArchFinding struct {
 	Cost         string `json:"cost"`
+	Impact       string `json:"impact"`
 	Location     string `json:"location"`
 	DivergesFrom string `json:"diverges_from"`
 	Description  string `json:"description"`
@@ -305,7 +310,8 @@ func formatMarkdownReport(report *ReviewReport) string {
 	if len(report.Issues) > 0 {
 		sb.WriteString("### Issues Found\n\n")
 		for _, issue := range report.Issues {
-			sb.WriteString(fmt.Sprintf("- **[%s] %s** at `%s`\n", strings.ToUpper(issue.Severity), issue.Type, issue.Location))
+			sb.WriteString(fmt.Sprintf("- **[%s] %s** %s\n", strings.ToUpper(issue.Severity), issue.Type, issue.Impact))
+			sb.WriteString(fmt.Sprintf("  - `%s`\n", issue.Location))
 			sb.WriteString(fmt.Sprintf("  - %s\n", issue.Description))
 			if issue.Suggestion != "" {
 				sb.WriteString(fmt.Sprintf("  - *Suggestion:* %s\n", issue.Suggestion))
@@ -331,7 +337,8 @@ func formatArchMarkdownReport(report *ArchReport) string {
 	if len(report.Findings) > 0 {
 		sb.WriteString("### Findings\n\n")
 		for _, finding := range report.Findings {
-			sb.WriteString(fmt.Sprintf("- **[%s] `%s`** diverges from `%s`\n", strings.ToUpper(finding.Cost), finding.Location, finding.DivergesFrom))
+			sb.WriteString(fmt.Sprintf("- **[%s]** %s\n", strings.ToUpper(finding.Cost), finding.Impact))
+			sb.WriteString(fmt.Sprintf("  - `%s` diverges from `%s`\n", finding.Location, finding.DivergesFrom))
 			sb.WriteString(fmt.Sprintf("  - %s\n", finding.Description))
 			if finding.Suggestion != "" {
 				sb.WriteString(fmt.Sprintf("  - *Suggestion:* %s\n", finding.Suggestion))
@@ -459,6 +466,11 @@ func parseReviewReport(response ai.Response) (*ReviewReport, error) {
 	if err := json.Unmarshal([]byte(jsonStr), &report); err != nil {
 		return nil, fmt.Errorf("parse review JSON: %w", err)
 	}
+	for _, issue := range report.Issues {
+		if strings.TrimSpace(issue.Impact) == "" {
+			return nil, fmt.Errorf("review issue at %q has no impact", issue.Location)
+		}
+	}
 	return &report, nil
 }
 
@@ -475,6 +487,9 @@ func parseArchReport(response ai.Response) (*ArchReport, error) {
 	for _, finding := range report.Findings {
 		if _, ok := archCostRank[finding.Cost]; !ok {
 			return nil, fmt.Errorf("architecture finding at %q has unknown cost %q", finding.Location, finding.Cost)
+		}
+		if strings.TrimSpace(finding.Impact) == "" {
+			return nil, fmt.Errorf("architecture finding at %q has no impact", finding.Location)
 		}
 	}
 	sort.SliceStable(report.Findings, func(i, j int) bool {
