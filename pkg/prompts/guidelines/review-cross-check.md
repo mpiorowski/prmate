@@ -13,9 +13,8 @@ of the same pull request.
 ## Steps
 
 1. Check the peer review's findings against the code and the PR context.
-2. Name the findings to drop, lower, raise, merge, or rewrite.
+2. Name the findings to drop, reclassify, merge, or rewrite.
 3. Compare both reviews and call out anything real that neither caught.
-4. Reassess the verdict against what survives.
 
 ## Scope
 
@@ -35,14 +34,11 @@ Return Markdown with these sections and nothing else:
 - Findings from either review that survive.
 
 ## False Positives or Changes
-- Findings to drop, lower, raise, merge, or rewrite, with a brief reason.
+- Findings to drop, reclassify, merge, or rewrite, with a brief reason.
 
 ## Missed Issues
 - Real issues neither review captured. Include severity, location, impact, and
   fix direction.
-
-## Verdict
-- The verdict you would choose after cross-checking, with a short reason.
 ```
 
 Do not restate either review verbatim. If both reviews are solid and complete,

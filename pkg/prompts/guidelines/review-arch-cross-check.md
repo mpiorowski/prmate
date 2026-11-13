@@ -14,15 +14,17 @@ independent architecture review of the same pull request.
 
 1. For each peer finding, open the reference in `diverges_from` and the sites
    its description names, and confirm the divergence is real in the worktree.
+   For a finding with no reference, confirm the code it names has no caller.
 2. Name the findings to drop, re-cost, merge, or rewrite.
 3. Compare both reviews and call out anything real that neither caught.
 
 ## Scope
 
-- The PR context file, the changed files, and the references the findings
-  name are the source of truth.
-- Read the touched domain and one sibling domain when a finding depends on
-  how the rest of the codebase does something.
+- The PR context file, the touched domains, and the references the findings
+  name are the source of truth. A finding may sit anywhere in a touched
+  domain, not only in the diff.
+- Read one sibling domain when a finding depends on how the rest of the
+  codebase does something.
 - Do not tour the repository beyond that.
 
 ## Required output

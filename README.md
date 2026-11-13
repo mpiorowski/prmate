@@ -157,7 +157,7 @@ With two LLMs, `prmate review` runs two independent tracks through three rounds:
 2. Each LLM cross-checks the other review within the same track. A bug reviewer never judges an architecture finding, and the other way round.
 3. The first LLM synthesizes one final JSON report per track, which the CLI prints as Markdown, bugs first.
 
-The bug report carries a verdict and can block the merge. The architecture report has no verdict: every finding is a comment naming what diverges and the sibling it diverges from, ranked by the cost of leaving it (`high`, `medium`, `low`). On both tracks each entry leads with a one-sentence impact a reader can judge without opening a file; the paths and the evidence sit beneath it. `--no-arch` drops the second track.
+The bug report marks each issue `blocking` or `comment` and derives its verdict from that, so it can block the merge. The architecture report has no verdict: every finding is a comment naming what diverges and the sibling it diverges from, ranked by the cost of leaving it (`high` or `medium`). It covers every domain the PR touches, not only the diff, so pre-existing drift there is reported too. On both tracks each entry leads with a one-sentence impact a reader can judge without opening a file; the paths and the evidence sit beneath it. `--no-arch` drops the second track.
 
 With one LLM, `prmate review` runs a single bug review. The architecture track needs a second reviewer to cross-check, so it is skipped with a note.
 

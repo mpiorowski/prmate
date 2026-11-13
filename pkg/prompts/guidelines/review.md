@@ -30,36 +30,33 @@ Return JSON only. Do not wrap it in prose unless you must place it in a fenced
 ```json
 {
   "summary": "short review summary",
-  "verdict": "NEEDS_CHANGES | APPROVE | COMMENT",
   "issues": [
     {
-      "severity": "critical | high | medium | low",
-      "type": "security | correctness | data_integrity | performance | breaking_change | testing",
+      "severity": "blocking | comment",
+      "type": "security | correctness | data_integrity | performance | breaking_change | testing | docs",
       "impact": "one sentence: what is wrong and what it does to the app",
       "location": "path/to/file:line",
       "description": "the evidence: the code path that produces the impact",
       "suggestion": "concrete fix or mitigation"
     }
-  ],
-  "positives": [
-    "brief thing that looks good"
   ]
 }
 ```
 
 ## Field rules
 
-- `verdict`, `severity`, and `type` accept only the values listed above. The
-  project guide decides which value a given finding warrants.
+- `severity` and `type` accept only the values listed above. The project
+  guide decides which value a given issue warrants. There is no verdict
+  field: the verdict is derived from the issues after parsing.
 - `impact` is the headline. It is one sentence that a reader with no file
   open understands: what is wrong and what it does to the app. No paths, no
   function names, no reasoning. It is required; an issue without one is not
   reported.
 - `location` is `path/to/file:line`.
-- `description` is the evidence for `impact`, kept to a few sentences. The
+- `description` is the evidence for `impact`, at most three sentences. The
   paths and names go here. It states the problem only: never what cannot
   happen, and never how the finding was reached.
 - One issue per entry. A second problem is its own entry or is left out, and
   `suggestion` fixes only the issue it belongs to.
 - `issues` is an empty array when there is nothing to report.
-- Keep `summary` and each `positives` entry to one short line.
+- Keep `summary` to one short line.

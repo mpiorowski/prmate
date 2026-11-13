@@ -28,11 +28,11 @@ type ReviewIssue struct {
 	Suggestion  string `json:"suggestion"`
 }
 
+// ReviewReport has no verdict field: the verdict is derived from the issues
+// by reviewVerdict, so a report cannot approve over a blocker.
 type ReviewReport struct {
-	Summary   string        `json:"summary"`
-	Verdict   string        `json:"verdict"`
-	Issues    []ReviewIssue `json:"issues"`
-	Positives []string      `json:"positives"`
+	Summary string        `json:"summary"`
+	Issues  []ReviewIssue `json:"issues"`
 }
 
 // ArchFinding is one architecture comment. It carries no severity and no
@@ -49,9 +49,8 @@ type ArchFinding struct {
 }
 
 type ArchReport struct {
-	Summary   string        `json:"summary"`
-	Findings  []ArchFinding `json:"findings"`
-	Positives []string      `json:"positives"`
+	Summary  string        `json:"summary"`
+	Findings []ArchFinding `json:"findings"`
 }
 
 // reviewTrack is one independent pass over the PR. Each track has its own
@@ -305,7 +304,7 @@ func extractBalancedJSONObject(input string) (string, bool) {
 
 func formatMarkdownReport(report *ReviewReport) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Code Review Summary\n\n**Verdict:** %s\n\n**Summary:** %s\n\n", report.Verdict, report.Summary))
+	sb.WriteString(fmt.Sprintf("## Code Review Summary\n\n**Verdict:** %s\n\n**Summary:** %s\n\n", reviewVerdict(report), report.Summary))
 
 	if len(report.Issues) > 0 {
 		sb.WriteString("### Issues Found\n\n")
@@ -320,13 +319,6 @@ func formatMarkdownReport(report *ReviewReport) string {
 		sb.WriteString("\n")
 	}
 
-	if len(report.Positives) > 0 {
-		sb.WriteString("### Positives\n\n")
-		for _, positive := range report.Positives {
-			sb.WriteString(fmt.Sprintf("- %s\n", positive))
-		}
-	}
-
 	return sb.String()
 }
 
@@ -338,20 +330,17 @@ func formatArchMarkdownReport(report *ArchReport) string {
 		sb.WriteString("### Findings\n\n")
 		for _, finding := range report.Findings {
 			sb.WriteString(fmt.Sprintf("- **[%s]** %s\n", strings.ToUpper(finding.Cost), finding.Impact))
-			sb.WriteString(fmt.Sprintf("  - `%s` diverges from `%s`\n", finding.Location, finding.DivergesFrom))
+			if finding.DivergesFrom == "" {
+				sb.WriteString(fmt.Sprintf("  - `%s`\n", finding.Location))
+			} else {
+				sb.WriteString(fmt.Sprintf("  - `%s` diverges from `%s`\n", finding.Location, finding.DivergesFrom))
+			}
 			sb.WriteString(fmt.Sprintf("  - %s\n", finding.Description))
 			if finding.Suggestion != "" {
 				sb.WriteString(fmt.Sprintf("  - *Suggestion:* %s\n", finding.Suggestion))
 			}
 		}
 		sb.WriteString("\n")
-	}
-
-	if len(report.Positives) > 0 {
-		sb.WriteString("### Positives\n\n")
-		for _, positive := range report.Positives {
-			sb.WriteString(fmt.Sprintf("- %s\n", positive))
-		}
 	}
 
 	return sb.String()
@@ -460,6 +449,21 @@ func validateThinkingForSpecs(specs []ai.Spec, thinking string, thinkingExplicit
 	return nil
 }
 
+// issueSeverityRank orders issues in the rendered report, blocking first.
+// It is also the closed set an issue's severity must come from.
+var issueSeverityRank = map[string]int{"blocking": 0, "comment": 1}
+
+// issueTypes is the closed set an issue's type must come from.
+var issueTypes = map[string]struct{}{
+	"security":        {},
+	"correctness":     {},
+	"data_integrity":  {},
+	"performance":     {},
+	"breaking_change": {},
+	"testing":         {},
+	"docs":            {},
+}
+
 func parseReviewReport(response ai.Response) (*ReviewReport, error) {
 	jsonStr := extractJSON(response.FinalMessage)
 	var report ReviewReport
@@ -467,16 +471,40 @@ func parseReviewReport(response ai.Response) (*ReviewReport, error) {
 		return nil, fmt.Errorf("parse review JSON: %w", err)
 	}
 	for _, issue := range report.Issues {
+		if _, ok := issueSeverityRank[issue.Severity]; !ok {
+			return nil, fmt.Errorf("review issue at %q has unknown severity %q", issue.Location, issue.Severity)
+		}
+		if _, ok := issueTypes[issue.Type]; !ok {
+			return nil, fmt.Errorf("review issue at %q has unknown type %q", issue.Location, issue.Type)
+		}
 		if strings.TrimSpace(issue.Impact) == "" {
 			return nil, fmt.Errorf("review issue at %q has no impact", issue.Location)
 		}
 	}
+	sort.SliceStable(report.Issues, func(i, j int) bool {
+		return issueSeverityRank[report.Issues[i].Severity] < issueSeverityRank[report.Issues[j].Severity]
+	})
 	return &report, nil
+}
+
+// reviewVerdict derives the verdict from the parsed issues: any blocker
+// needs changes, comments alone are a comment, no issues is an approval.
+func reviewVerdict(report *ReviewReport) string {
+	verdict := "APPROVE"
+	for _, issue := range report.Issues {
+		switch issue.Severity {
+		case "blocking":
+			return "NEEDS_CHANGES"
+		case "comment":
+			verdict = "COMMENT"
+		}
+	}
+	return verdict
 }
 
 // archCostRank orders findings in the rendered report, highest cost first.
 // It is also the closed set a finding's cost must come from.
-var archCostRank = map[string]int{"high": 0, "medium": 1, "low": 2}
+var archCostRank = map[string]int{"high": 0, "medium": 1}
 
 func parseArchReport(response ai.Response) (*ArchReport, error) {
 	jsonStr := extractJSON(response.FinalMessage)

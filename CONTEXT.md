@@ -234,8 +234,8 @@ Key behavior:
 - `addWorktreeFromPullRequestHead` first tries `origin/<headRefName>`, then falls back to fetching `pull/<number>/head` into `refs/pr-tool/pr/<number>`.
 - `.pr-context.md` contains the project guide, project context, PR metadata, title, body, and local diff against the PR base branch. Review prompts instruct the LLM to read the guide first, then follow relevant domain-context pointers before reviewing, cross-checking, or synthesizing.
 - For PR review, project context is read from `CONTEXT.md` on the PR base ref when possible (`origin/<base>` then `<base>`), then falls back to the checked-out worktree. This avoids treating contributor changes to root context as authoritative reviewer instructions.
-- Bug track output must parse to `ReviewReport` JSON, which carries a verdict and severities. Architecture track output must parse to `ArchReport` JSON, which has no verdict: each finding carries `cost` (`high`, `medium`, `low`, a closed set rejected on parse), `impact`, `location`, `diverges_from` (a single `path:line`), `description`, `suggestion`. Findings render highest cost first. The CLI tolerates fenced JSON and extracts a balanced top-level object when possible. Round 1 responses are parsed before the cross-check so a malformed review fails early.
-- Every issue and finding on both tracks carries a required `impact`: one sentence, no paths or function names, saying what is wrong and what it does to the app (bugs) or what the next change to the area pays (architecture). It renders as the headline of the entry; `location`, `diverges_from`, and `description` render beneath it as the evidence. A finding with an empty `impact` is rejected on parse. The split is deliberate: the headline is for the human deciding whether to act, the lines below are for whoever (or whatever) applies the fix.
+- Bug track output must parse to `ReviewReport` JSON: each issue carries `severity` (`blocking` or `comment`) and `type` (a closed set), both rejected on parse when unknown, and issues render blocking first. The report has no verdict field. The verdict is derived in Go after parsing: `NEEDS_CHANGES` with any blocker, `COMMENT` with only comments, `APPROVE` with none, so a report cannot approve over a blocker. Architecture track output must parse to `ArchReport` JSON, which has no verdict: each finding carries `cost` (`high` or `medium`, a closed set rejected on parse; the guide has no lower tier), `impact`, `location`, `diverges_from` (a single `path:line`, empty only for dead code, which has no reference and renders its location alone), `description`, `suggestion`. Findings render highest cost first. The CLI tolerates fenced JSON and extracts a balanced top-level object when possible. Round 1 responses are parsed before the cross-check so a malformed review fails early.
+- Every issue and finding on both tracks carries a required `impact`: one sentence, no paths or function names, saying what is wrong and what it does to the app (bugs) or what the next change to the area pays (architecture). It renders as the headline of the entry; `location`, `diverges_from`, and `description` render beneath it as the evidence. A finding with an empty `impact` is rejected on parse. Neither report carries positives: the guide reports nothing that fits well, so a clean track is a summary line and an empty list. The split is deliberate: the headline is for the human deciding whether to act, the lines below are for whoever (or whatever) applies the fix.
 
 ### 3.4 LLM provider adapter contracts
 
@@ -327,11 +327,12 @@ This tool passes PR title, PR body, local diff content, and selected worktree fi
 - Embedded prompt guidelines stay structure and flow only. Any rule about what makes a finding or a description good belongs in `GUIDE.md`.
 - `ReviewReport` and `ArchReport` JSON shapes are public internal contracts between prompts and parser. Update prompt guidelines, parser, tests, and Markdown rendering together.
 - `ArchReport` has no verdict field. The architecture track never gates a merge, and the shape must stay unable to express one. `cost` ranks findings for the reader; it is not a gate.
+- `ReviewReport` has no verdict field either. The bug verdict is derived from issue severities in `reviewVerdict`, never read from the LLM, so a report cannot approve over a blocker.
 - Keep prompt guidelines embedded through `pkg/prompts`; do not replace them with runtime file reads unless install and packaging behavior are redesigned.
 - Do not broaden LLM provider names in command parsing without adding provider adapter behavior and tests. Provider names stay a closed set in `ai.ParseSpec`; model names stay pass-through.
 - Anything that names a reviewer to the user or to another LLM uses `Spec.String()`, never `Spec.Provider`. Two reviewers on one provider are only distinguishable by the full spec.
 - Do not add new thinking levels for Codex or Claude without checking provider docs/help and updating validation tests.
-- Bug track prompts constrain agents to changed files and directly referenced code, with no repository search. Architecture track prompts widen that to the touched domain, one sibling domain, and targeted search for duplication the diff extends. Neither track tours the repository.
+- Bug track prompts constrain agents to changed files and directly referenced code, with no repository search. Architecture track prompts review every touched domain whole, diff or not, read one sibling domain as the reference only, and allow two targeted searches: the sites of a copy the diff extends, and the callers of a symbol in a touched domain. Neither track tours the repository.
 
 ---
 
@@ -344,7 +345,7 @@ go test ./...
 ```
 
 Current package coverage:
-- `cmd`: prompt construction, reviewer spec list parsing (including two models of one provider), JSON extraction, track list selection, guideline loading per track, architecture report rendering, and invalid PR validation.
+- `cmd`: prompt construction, reviewer spec list parsing (including two models of one provider), JSON extraction, track list selection, guideline loading per track, bug verdict derivation and severity/type validation, architecture report rendering, and invalid PR validation.
 - `pkg/ai`: provider command construction, response parsing, mode labels, and output normalization.
 - `pkg/ai` thinking controls: provider-specific command arguments and unsupported-provider validation.
 - `pkg/ai` spec parsing: provider/model splitting, label formatting, and rejection of unknown providers or empty models.
@@ -406,7 +407,7 @@ Setup behavior:
 ## 8. Known Caveats [VOLATILE]
 
 - Provider CLIs are external and their JSON/JSONL output formats may change. `pkg/ai` is the compatibility boundary.
-- Provider thinking flags are not uniform: Codex and Claude leave model selection to their CLI defaults, Codex uses a config override for effort, Claude uses `--effort`, OpenCode uses variants, and Gemini currently has no supported mapping. The CLI defaults to `high` for supported providers and ignores that implicit default for Gemini.
+- Provider thinking flags are not uniform: Codex uses a config override for effort, Claude uses `--effort`, OpenCode uses variants, and Gemini currently has no supported mapping. The CLI defaults to `high` for supported providers and ignores that implicit default for Gemini.
 - A branch with no open PR yet still diffs against `origin/main` and is created against the default branch. A stacked branch must have its PR opened first (e.g. `gh stack submit`) before describe picks up its parent.
 - `git.FetchOrigin` calls are best effort in some worktree creation paths. This is intentional for local-only branches, but it means stale remotes can affect generated diffs.
 - `BranchExists` runs git in the current process directory rather than accepting an explicit repo path.
